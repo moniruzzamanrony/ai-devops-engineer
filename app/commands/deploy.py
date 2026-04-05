@@ -1,3 +1,5 @@
+import typer
 
-def app():
-    print("Deploying the application...")
+def deploy():
+    """Deploy the application"""
+    print("[*] Deploying application...")
