@@ -17,96 +17,119 @@ def get_banner():
 
 def generate_deployment_prompt():
     prompt = f"""
-        You are a DevOps automation agent.
-        
-        Your task is to generate a COMPLETE and VALID deployment plan as a STRING array of executable commands.
-        
-        ========================
-        PROJECT DETAILS
-        ========================
-        Repository URL: {get_value('repo_link')}
-        Git Username: {get_value('git_username')}
-        Git Access Token: {get_value('git_access_token')}
-        Domain: {get_value('domain')}
-        
-        ========================
-        SERVER DETAILS
-        ========================
-        Host: {get_value('server_host')}
-        Port: {get_value('server_port')}
-        User: {get_value('server_user')}
-        Password: {get_value('server_password')}
-        
-        ========================
-        REQUIREMENTS
-        ========================
-        
-        Generate a step-by-step deployment command sequence that includes:
-        
-        0. Install sshpass (if not already installed)
-        1. Connect to the remote server using sshpass
-        2. Install required dependencies on the server (if not already installed):
-           - Docker and add verify commend
-           - Git and add verify commend
-           - Nginx and add verify commend
-           - Certbot (Let's Encrypt) and add verify commend
-        3. Clone the repository using Git credentials
-        4. Build the Docker image
-        5. Run the Docker container
-        6. Configure Nginx as a reverse proxy
-        7. Configure domain routing to forward traffic to the container
-        8. Setup SSL using Let's Encrypt (HTTPS)
-        9. Enable firewall ports (80, 443). Must be remember thatDON'T remove 22 port 
-        
-        ========================
-        COMMAND FORMAT RULES
-        ========================
-        
-        - Each command MUST use this SSH format:
-          sshpass -p '{get_value('server_password')}' ssh {get_value('server_user')}@{get_value('server_host')} 'command'
-        
-        - All commands must be:
-          - Self-contained
-          - Executable independently
-          - Single-line only
-        
-        - Use Git credentials in clone step:
-          https://{get_value('git_username')}:{get_value('git_access_token')}@github.com/...
-        
-        ========================
-        CRITICAL RULES
-        ========================
-        
-        - Output MUST be a valid STRING array
-        - DO NOT include explanations
-        - DO NOT include markdown
-        - DO NOT include extra text
-        - DO NOT include comments
-        - DO NOT truncate output
-        - Ensure all strings are properly escaped
-        - Ensure no broken quotes
-        - Each command must be valid and runnable
-        
-        ========================
-        OUTPUT FORMAT
-        ========================
-        
-        [
-          "sshpass -p 'PASSWORD' ssh USER@HOST 'command'",
-          "sshpass -p 'PASSWORD' ssh USER@HOST 'command'"
-        ]
-        
-        ========================
-        IMPORTANT
-        ========================
-        
-        - Return ONLY STRING
-        - No text before or after
-        - No partial STRING
-        - No explanations
-        
-        Now generate the deployment commands.
-        """
+You are a DevOps automation agent.
+
+Your task is to generate a COMPLETE and VALID deployment plan as a STRING array of executable commands.
+
+========================
+PROJECT DETAILS
+========================
+Repository URL: {get_value('repo_link')}
+Git Username: {get_value('git_username')}
+Git Access Token: {get_value('git_access_token')}
+Domain: {get_value('domain')}
+
+========================
+SERVER DETAILS
+========================
+Host: {get_value('server_host')}
+Port: {get_value('server_port')}
+User: {get_value('server_user')}
+Password: {get_value('server_password')}
+
+========================
+REQUIREMENTS
+========================
+
+Generate a step-by-step deployment command sequence that includes:
+
+0. Install sshpass (if not already installed)
+1. Install dependencies on the server (if not already installed):
+   - Docker (with verification)
+   - Git (with verification)
+   - Nginx (with verification)
+   - Certbot (with verification)
+2. Clone the repository (only if not already cloned)
+3. Build Docker image (only if not already built)
+4. Run Docker container (only if not already running)
+5. Configure Nginx (only if not already configured)
+6. Configure domain routing
+7. Setup SSL using Let's Encrypt (only if not already exists)
+8. Enable firewall ports (8080, 443) and ensure port 22 is NOT removed
+
+========================
+IDEMPOTENT RULE (VERY IMPORTANT)
+========================
+
+- BEFORE running ANY command, you MUST check:
+  - If the step is already completed → SKIP execution
+  - If not completed → execute the command
+
+- Use safe patterns like:
+  - command || install_command
+  - condition && skip || run
+  - check using:
+    - command -v
+    - systemctl status
+    - docker ps / docker images
+    - test -d / test -f
+
+- Examples:
+  - command -v docker || apt install -y docker.io
+  - [ -d repo ] || git clone ...
+  - docker ps | grep container || docker run ...
+  - systemctl is-active nginx || systemctl start nginx
+
+========================
+COMMAND FORMAT RULES
+========================
+
+- Each command MUST use this SSH format:
+  sshpass -p '{get_value('server_password')}' ssh {get_value('server_user')}@{get_value('server_host')} 'command'
+
+- All commands must be:
+  - Single-line
+  - Self-contained
+  - Independently executable
+
+- Use Git credentials in clone:
+  https://{get_value('git_username')}:{get_value('git_access_token')}@github.com/...
+
+========================
+CRITICAL RULES
+========================
+
+- Output MUST be a valid STRING array
+- DO NOT include explanations
+- DO NOT include markdown
+- DO NOT include extra text
+- DO NOT include comments
+- DO NOT truncate output
+- Ensure valid JSON
+- Ensure proper escaping
+- Ensure no broken quotes
+- Each command must be idempotent and safe to re-run
+
+========================
+OUTPUT FORMAT
+========================
+
+[
+  "sshpass -p 'PASSWORD' ssh USER@HOST 'command'",
+  "sshpass -p 'PASSWORD' ssh USER@HOST 'command'"
+]
+
+========================
+IMPORTANT
+========================
+
+- Return ONLY STRING array
+- No text before or after JSON
+- No partial output
+- No explanations
+
+Now generate the deployment commands.
+"""
     return prompt
 
 
