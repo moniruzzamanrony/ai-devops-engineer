@@ -2,17 +2,18 @@ import subprocess
 
 def run_command(command):
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             command,
-            shell=True,              # allows full shell commands
-            capture_output=True,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True
         )
+        stdout, stderr = process.communicate()
 
         return {
-            "output": result.stdout.strip(),
-            "error": result.stderr.strip(),
-            "exit_status": result.returncode
+            "output": stdout.strip(),
+            "error": stderr.strip(),
         }
 
     except Exception as e:
