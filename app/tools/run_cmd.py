@@ -1,19 +1,12 @@
 import subprocess
 
-def run_command(host, username, command, key_file=None):
-    ssh_command = ["ssh"]
-
-    if key_file:
-        ssh_command += ["-i", key_file]
-
-    ssh_command += [f"{username}@{host}", command]
-
+def run_command(command):
     try:
         result = subprocess.run(
-            ssh_command,
+            command,
+            shell=True,              # allows full shell commands
             capture_output=True,
-            text=True,
-            timeout=10
+            text=True
         )
 
         return {
@@ -22,9 +15,9 @@ def run_command(host, username, command, key_file=None):
             "exit_status": result.returncode
         }
 
-    except subprocess.TimeoutExpired as e:
+    except Exception as e:
         return {
             "output": "",
-            "error": "Command timed out",
+            "error": str(e),
             "exit_status": -1
         }
