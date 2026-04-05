@@ -13,7 +13,7 @@ def get_banner():
     return banner
 
 
-def generate_deployment_prompt(repo_link,git_username,git_password, server_host, server_port, server_user, server_password, domain):
+def generate_deployment_prompt(repo_link='https://github.com/moniruzzamanrony/rent-tech-api.git',git_username='moniruzzamanrony',git_password='ITvillage428854@#', server_host='213.199.36.174', server_port=22, server_user='root', server_password='AVNSHiB7Cg0kpa4D8JOESP', domain='rentmark.live'):
     prompt = f"""
         I want to deploy a project using Docker from a GitHub repository.
 
