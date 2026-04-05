@@ -1,183 +1,239 @@
 import shutil
 import sys
-
-from app.config.hugging_face_client import call_hf
-from collections import deque
+import datetime
 import json
 import re
-from app.tools.run_cmd import run_command
-import datetime
+import time
+from collections import deque
 
-from app.utils.prompt_text import generate_result_analysis_prompt
-from click import prompt
+from app.config.hugging_face_client import call_hf
+from app.tools.run_cmd import run_command
+from app.utils.prompt_text import generate_result_analysis_prompt, generate_error_fix_prompt
+
+prompt_temp = None
+error_block =[]
+# ============================================================
+# CONFIG
+# ============================================================
+
+COMMAND_DELAY_SECONDS = 2  # delay between commands
+
+# ============================================================
+# LOGGER
+# ============================================================
+
+def log(message: str, level: str = "INFO", indent: int = 0):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    prefix = "  " * indent
+
+    level_icons = {
+        "START": "🚀",
+        "END": "🏁",
+        "INFO": "ℹ️",
+        "WARN": "⚠️",
+        "ERROR": "❌",
+        "CMD": "💻",
+        "RESULT": "📦",
+        "QUEUE": "📥",
+        "FIX": "🔧"
+    }
+
+    icon = level_icons.get(level, "•")
+
+    print(f"{prefix}{icon} [{timestamp}] [{level}] {message}")
+
+# ============================================================
+# GLOBAL QUEUE
+# ============================================================
 
 ai_instruction_queue = deque()
 
-
-def log(message: str):
-    """Simple logger with timestamp"""
-    print(f"[{datetime.datetime.now()}] {message}")
-
+# ============================================================
+# MAIN PIPELINE
+# ============================================================
 
 def ask_devops(prompt: str):
-    """
-    DevOps AI pipeline with full logging and safety
-    """
+    log("=== START DEVOPS PROCESS ===", "START")
 
-    log("=== START DEVOPS PIPELINE ===")
+    global prompt_temp
+    prompt_temp = prompt
 
     # -----------------------------
     # Step 1: Call AI
     # -----------------------------
-    log("Sending prompt to AI...")
+    log("Sending prompt to AI...", "INFO")
     res = call_hf(prompt)
 
-    # Detect truncation
     finish_reason = res.get("choices", [{}])[0].get("finish_reason")
     if finish_reason == "length":
-        log("⚠️ Warning: AI response was truncated")
+        log("⚠️ AI response truncated", "WARN")
+
     try:
         content = res["choices"][0]["message"]["content"]
     except Exception:
         content = str(res)
 
     # -----------------------------
-    # Step 2: Parse instructions
+    # Step 2: Parse Instructions
     # -----------------------------
     instructions = parse_ai_instructions(content)
+    log(f"Parsed instructions count: {len(instructions)}", "INFO")
 
-    log(f"Parsed instructions count: {len(instructions)}")
+    if len(instructions) == 0:
+        log("Instructions count is 0: Retrying", "ERROR")
+        ask_devops(prompt_temp)
+        return None
 
     # -----------------------------
-    # Step 3: Queue instructions
+    # Step 3: Queue Instructions
     # -----------------------------
     for instruction in instructions:
+        log(f"Queued command: {instruction}", "QUEUE")
         ai_instruction_queue.append(instruction)
 
-
     # -----------------------------
-    # Step 4: Execute instructions
+    # Step 4: Execute Instructions
     # -----------------------------
     while ai_instruction_queue:
         cmd = ai_instruction_queue.popleft()
-        try:
-            log(f": {cmd}")
-            if is_valid_command(cmd):
-                result = execute_cmd(cmd,ai_instruction_queue)
-                log(f"Command success: {result}\n\n")
-            else:
-                log("Invalid suggestion from model")
-                sys.exit(1)
-        except Exception as e:
-            log(f"Command execution failed: {e}")
 
-    log("=== DEVOPS PIPELINE COMPLETED ===")
+        try:
+            log(f"\n\nExecuting command: {cmd}", "CMD")
+
+            if is_valid_command(cmd):
+                result = run_command(cmd)
+                if result.get('error') is not "":
+                    error_block.append({
+                        "run_cmd":cmd,
+                        "error": result.get('error')
+                    })
+                log(f"Command success: {result.get('output')}", "RESULT")
+            else:
+                log("Invalid command from model", "ERROR")
+                sys.exit(1)
+
+            # Delay between commands
+            time.sleep(COMMAND_DELAY_SECONDS)
+
+        except Exception as e:
+            log(f"Command execution failed: {e}", "ERROR")
+
+    log("=== DEVOPS PIPELINE COMPLETED ===", "END")
+
+    if error_block:
+        error_block_prompt = generate_error_fix_prompt(error_block)
+        ask_devops(error_block_prompt)
     return True
 
+# # ============================================================
+# # EXECUTION ENGINE
+# # ============================================================
+#
+# import time
+#
+# def execute_cmd(cmd: str, depth=0):
+#     indent = depth
+#
+#     log(f"Executing command: {cmd}", "CMD", indent)
+#
+#     try:
+#         res = run_command(cmd)
+#
+#         if not res or not isinstance(res, dict):
+#             log("Command returned invalid or empty result", "ERROR", indent)
+#             return {
+#                 "output": "",
+#                 "error": "Invalid command result",
+#                 "exit_status": -1
+#             }
+#
+#         log(f"Command output: {res}", "RESULT", indent)
+#
+#         # Success
+#         if res.get("error") == "":
+#             return {
+#                 "output": res.get("output", ""),
+#                 "error": "",
+#                 "exit_status": 0
+#             }
+#
+#         # Error case
+#         return {
+#             "output": res.get("output", ""),
+#             "error": res.get("error", ""),
+#             "exit_status": res.get("exit_status", -1)
+#         }
+#
+#     except Exception as e:
+#         log(f"Exception while executing command: {str(e)}", "ERROR", indent)
+#         return {
+#             "output": "",
+#             "error": str(e),
+#             "exit_status": -1
+#         }
 
-def execute_cmd(cmd : str,ai_instruction_queue):
-    ai_sub_instruction_queue = deque()
-    res = run_command(cmd)
-    log(f"Command execute response: {res}")
-    prompt = generate_result_analysis_prompt(res,ai_instruction_queue)
-    aiRes = call_hf(prompt)
-    print(aiRes)
-    try:
-        content = aiRes["choices"][0]["message"]["content"]
-    except Exception:
-        content = str(aiRes)
-    instructions = parse_ai_instructions(content)
-
-    for instruction in instructions:
-        ai_sub_instruction_queue.append(instruction)
-
-    while ai_sub_instruction_queue:
-        sub_instruction = ai_sub_instruction_queue.popleft()
-        print(f'Is valid cmd: {is_valid_command(sub_instruction)}')
-        if is_valid_command(sub_instruction):
-            log(f"Run For Fixing:  : {sub_instruction}")
-            execute_cmd(sub_instruction,ai_sub_instruction_queue)
-        else:
-            sys.exit(1)
 # ============================================================
-# INSTRUCTION PARSER
+# COMMAND VALIDATION
+# ============================================================
+
+def is_valid_command(cmd: str) -> bool:
+    parts = cmd.strip().split()
+    if not parts:
+        return False
+
+    command_name = parts[0]
+    return shutil.which(command_name) is not None
+
+# ============================================================
+# PARSER
 # ============================================================
 
 def parse_ai_instructions(content: str):
-    """
-    Robust JSON parser with fallback extraction and escape fixing.
-    Returns a list of commands.
-    """
-
     if not content:
-        log("No AI content received")
+        log("No AI content received", "WARN")
         return []
-
-    # -----------------------------
-    # Clean markdown/code fences
-    # -----------------------------
+    log(f"Requested content: {content}", "INFO")
     cleaned = re.sub(r"```json|```", "", content).strip()
-
-    # -----------------------------
-    # Fix invalid JSON escapes
-    # -----------------------------
     cleaned = fix_invalid_json_escapes(cleaned)
 
-    # -----------------------------
-    # Step 1: Direct JSON parse
-    # -----------------------------
+    # Direct parse
     try:
         data = json.loads(cleaned)
-        log("Direct JSON parsed successfully")
-
+        log("Direct JSON parsed successfully", "INFO")
         return normalize_output(data)
-
     except Exception as e:
-        log(f"Direct JSON parse failed: {e}")
-        log(f"Cleaned content: {cleaned}")
+        log(f"Direct JSON parse failed: {e}", "ERROR")
 
-    # -----------------------------
-    # Step 2: Extract JSON array fallback
-    # -----------------------------
+    # Fallback parse
     try:
         start = cleaned.find('[')
         end = cleaned.rfind(']')
 
-        if start == -1 or end == -1 or end <= start:
-            log("No valid JSON array found")
+        if start == -1 or end == -1:
+            log("No JSON array found", "ERROR")
             return []
 
         json_str = cleaned[start:end + 1]
-
-        # Normalize whitespace
         json_str = json_str.replace("\r", "").strip()
 
-        # Fix trailing commas
         json_str = re.sub(r",\s*}", "}", json_str)
         json_str = re.sub(r",\s*]", "]", json_str)
 
-        # Parse again
         data = json.loads(json_str)
-
-        log("Fallback JSON parsed successfully")
+        log("Fallback JSON parsed successfully", "INFO")
 
         return normalize_output(data)
 
     except Exception as e:
-        log(f"Fallback parsing failed: {e}")
+        log(f"Fallback parsing failed: {e}", "ERROR")
 
     return []
-
 
 # ============================================================
 # NORMALIZER
 # ============================================================
 
 def normalize_output(data):
-    """
-    Ensures the output is always a list
-    """
-
     if isinstance(data, list):
         return data
 
@@ -189,30 +245,13 @@ def normalize_output(data):
 
     return []
 
-
 # ============================================================
 # ESCAPE FIXER
 # ============================================================
 
 def fix_invalid_json_escapes(text: str):
-    """
-    Fix invalid backslashes that break JSON parsing
-    """
-
     if not text:
         return text
 
-    # Escape invalid backslashes (but keep valid JSON escapes intact)
     text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', text)
-
     return text
-
-
-def is_valid_command(cmd: str) -> bool:
-    print(cmd)
-    parts = cmd.strip().split()
-    if not parts:
-        return False
-
-    command_name = parts[0]
-    return shutil.which(command_name) is not None

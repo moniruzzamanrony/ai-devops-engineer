@@ -24,6 +24,7 @@ def user_interaction():
         print("\n---Server setup and deployment---")
 
         repo_link = input("Enter your git repository link: ").strip()
+        repo_link = 'https://github.com/moniruzzamanrony/rent-tech-api.git'
         if is_empty(repo_link):
             raise ValueError("Repository link is required")
 
@@ -39,9 +40,6 @@ def user_interaction():
             git_username = GIT_USERNAME
             git_access_token = GIT_ACCESS_TOKEN
 
-            if is_empty(git_username) or is_empty(git_access_token):
-                raise ValueError("Git credentials not found in environment")
-
         is_server_configured = input("Did you configure server (y/n): ").strip().lower()
 
         if is_server_configured == 'n':
@@ -54,7 +52,7 @@ def user_interaction():
                 raise ValueError("Server details cannot be empty")
         else:
             server_name = input("Enter server name (Check from .env): ").strip().upper()
-            server_name = server_name.upper()
+            server_name = 'rent_tech'.upper()
             server_host = get_server_credential(f'SERVER_HOST_{server_name}')
             server_port = get_server_credential(f'SERVER_PORT_{server_name}')
             server_user = get_server_credential(f'SERVER_USERNAME_{server_name}')
@@ -64,6 +62,7 @@ def user_interaction():
                 raise ValueError("Server credentials not found in .env")
 
         domain = input("Enter domain (Already DNS configured for the server): ").strip()
+        domain = 'api.rentmark.live'
         if is_empty(domain):
             raise ValueError("Domain is required")
 
