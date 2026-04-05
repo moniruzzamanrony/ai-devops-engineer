@@ -1,3 +1,2 @@
-
-def app():
+def start():
     print("Deploying the application...")
