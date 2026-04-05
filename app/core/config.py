@@ -7,8 +7,7 @@ HF_API_KEY = os.getenv("HF_API_KEY")
 GIT_USERNAME = os.getenv("GIT_USERNAME")
 GIT_ACCESS_TOKEN = os.getenv("GIT_ACCESS_TOKEN")
 
-def get_server_credential(server_name: str, key: str):
-    env_key = f"{server_name}_SERVER_{key}"
+def get_server_credential(env_key: str,):
     value = os.getenv(env_key)
 
     if not value:

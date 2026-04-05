@@ -54,12 +54,12 @@ def user_interaction():
                 raise ValueError("Server details cannot be empty")
         else:
             server_name = input("Enter server name (Check from .env): ").strip().upper()
-
-            server_host = get_server_credential(server_name, "HOST")
-            server_port = get_server_credential(server_name, "PORT")
-            server_user = get_server_credential(server_name, "USERNAME")
-            server_password = get_server_credential(server_name, "PASSWORD")
-
+            server_name = server_name.upper()
+            server_host = get_server_credential(f'SERVER_HOST_{server_name}')
+            server_port = get_server_credential(f'SERVER_PORT_{server_name}')
+            server_user = get_server_credential(f'SERVER_USERNAME_{server_name}')
+            server_password = get_server_credential(f'SERVER_PASSWORD_{server_name}')
+            # https: // github.com / moniruzzamanrony / rent - tech - api.git
             if any(is_empty(v) for v in [server_host, server_port, server_user, server_password]):
                 raise ValueError("Server credentials not found in .env")
 
