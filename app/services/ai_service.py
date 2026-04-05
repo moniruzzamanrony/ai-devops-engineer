@@ -8,7 +8,7 @@ from app.services.action_type_enum import ActionTypes
 ai_instruction_queue = deque()
 
 
-def ask_devops(request: DevOpsRequest):
+def ask_devops(prompt: str):
     """
     Main DevOps AI pipeline:
     1. Get AI response
@@ -20,7 +20,7 @@ def ask_devops(request: DevOpsRequest):
     # -----------------------------
     # Step 1: Get AI response
     # -----------------------------
-    res = call_hf(request.prompt)
+    res = call_hf(prompt)
 
     try:
         content = res["choices"][0]["message"]["content"]
@@ -66,7 +66,7 @@ def ask_devops(request: DevOpsRequest):
     - No system/terminal execution required
 
     User Request:
-    {request.prompt}
+    {prompt}
 
     retunn the action type as a JSON array with a single value, either "cmd" or "text".
     """

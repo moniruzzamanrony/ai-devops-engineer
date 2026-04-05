@@ -1,5 +1,6 @@
 import typer
 from app.utils import prompt_text
+from app.services.ai_service import ask_devops
 
 def start():
     """Start the application"""
@@ -18,6 +19,7 @@ def start():
         server_password = input("Enter server password: ")
 
         prompt = prompt_text.generate_deployment_prompt(repo_link, server_host, server_port, server_user, server_password)
+        ask_devops(prompt)
         # Add your server setup and deployment logic here
     elif input_choice == "2":
         print("[->2] Tell me about the issues you're facing.")
