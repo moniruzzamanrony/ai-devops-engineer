@@ -16,48 +16,76 @@ def user_interaction():
     print("1. Server setup and deployment")
     print("2. Issue diagnosis and troubleshooting")
     input_choice = input("Please enter the number corresponding to your choice: ")
+
+    def is_empty(value):
+        return value is None or str(value).strip() == ""
+
     if input_choice == "1":
         print("\n---Server setup and deployment---")
-        repo_link = input("Enter your git repository link: ")
-        is_git_configured = input("Did you configure git:(y/n)")
-        if is_git_configured is 'n':
-            git_username = input("Enter git username:")
-            git_access_token = input("Enter git password:")
-        else:
-            git_username = str(GIT_USERNAME)
-            git_access_token = str(GIT_ACCESS_TOKEN)
 
-        is_server_configured = input("Did you configure server:(y/n)")
-        if is_server_configured is 'n':
-            server_host = input("Enter server host: ")
-            server_port = input("Enter server ssh port: ")
-            server_user = input("Enter server username: ")
-            server_password = input("Enter server password: ")
-        else:
-            server_name = input("Enter server name: (Check from .env)")
-            server_host = get_server_credential(server_name.capitalize(),"SERVER_NAME")
-            server_port = get_server_credential(server_name.capitalize(),"SERVER_PORT")
-            server_user = get_server_credential(server_name.capitalize(),"SERVER_USERNAME")
-            server_password = get_server_credential(server_name.capitalize(),"SERVER_PASSWORD")
+        repo_link = input("Enter your git repository link: ").strip()
+        if is_empty(repo_link):
+            raise ValueError("Repository link is required")
 
-        domain = input("Enter domain (Already dns configured for the server): ")
+        is_git_configured = input("Did you configure git (y/n): ").strip().lower()
+
+        if is_git_configured == 'n':
+            git_username = input("Enter git username: ").strip()
+            git_access_token = input("Enter git password: ").strip()
+
+            if is_empty(git_username) or is_empty(git_access_token):
+                raise ValueError("Git credentials cannot be empty")
+        else:
+            git_username = GIT_USERNAME
+            git_access_token = GIT_ACCESS_TOKEN
+
+            if is_empty(git_username) or is_empty(git_access_token):
+                raise ValueError("Git credentials not found in environment")
+
+        is_server_configured = input("Did you configure server (y/n): ").strip().lower()
+
+        if is_server_configured == 'n':
+            server_host = input("Enter server host: ").strip()
+            server_port = input("Enter server ssh port: ").strip()
+            server_user = input("Enter server username: ").strip()
+            server_password = input("Enter server password: ").strip()
+
+            if any(is_empty(v) for v in [server_host, server_port, server_user, server_password]):
+                raise ValueError("Server details cannot be empty")
+        else:
+            server_name = input("Enter server name (Check from .env): ").strip().upper()
+
+            server_host = get_server_credential(server_name, "HOST")
+            server_port = get_server_credential(server_name, "PORT")
+            server_user = get_server_credential(server_name, "USERNAME")
+            server_password = get_server_credential(server_name, "PASSWORD")
+
+            if any(is_empty(v) for v in [server_host, server_port, server_user, server_password]):
+                raise ValueError("Server credentials not found in .env")
+
+        domain = input("Enter domain (Already DNS configured for the server): ").strip()
+        if is_empty(domain):
+            raise ValueError("Domain is required")
 
         data = {
             "repo_link": repo_link,
             "git_username": git_username,
             "git_access_token": git_access_token,
             "server_host": server_host,
-            "server_port": int(server_port) if isinstance(server_port, str) and server_port.isdigit() else server_port,
+            "server_port": int(server_port) if str(server_port).isdigit() else server_port,
             "server_user": server_user,
             "server_password": server_password,
             "domain": domain
         }
 
         save_json(data)
+
         prompt = prompt_text.generate_deployment_prompt()
         print(prompt)
+
         response = ask_devops(prompt)
         print(response)
+
         if response is True:
             user_interaction()
 
