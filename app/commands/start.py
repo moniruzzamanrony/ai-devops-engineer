@@ -21,7 +21,8 @@ def start():
         server_password = input("Enter server password: ")
         domain = input("Enter dimain(Alreday dns configured for the server): ")
 
-        prompt = prompt_text.generate_deployment_prompt(repo_link,git_username,git_password, server_host, server_port, server_user, server_password,domain)
+        prompt = prompt_text.generate_deployment_prompt(repo_link, git_username, git_password, server_host, server_port, server_user, server_password, domain)
+        print(prompt)
         ask_devops(prompt)
         # Add your server setup and deployment logic here
     elif input_choice == "2":

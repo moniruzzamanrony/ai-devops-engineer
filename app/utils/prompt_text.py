@@ -13,7 +13,7 @@ def get_banner():
     return banner
 
 
-def generate_deployment_prompt(repo_link,git_username,git_password, server_host, server_port, server_user, server_password,domain):
+def generate_deployment_prompt(repo_link,git_username,git_password, server_host, server_port, server_user, server_password, domain):
     prompt = f"""
         I want to deploy a project using Docker from a GitHub repository.
 
@@ -52,10 +52,11 @@ def generate_deployment_prompt(repo_link,git_username,git_password, server_host,
 
         Return the result as a JSON object:
         [
-        {
-        "cmd": "command to execute",
-        "desc": "description of the command"
-        }
+            {{
+                "cmd": "command to execute",
+                "desc": "description of the command"
+            }}
+
         ]
 
         STRICT RULES:
