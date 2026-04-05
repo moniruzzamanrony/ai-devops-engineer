@@ -12,62 +12,99 @@ def get_banner():
                  """
     return banner
 
-
-def generate_deployment_prompt(repo_link='https://github.com/moniruzzamanrony/rent-tech-api.git',git_username='moniruzzamanrony',git_password='ITvillage428854@#', server_host='213.199.36.174', server_port=22, server_user='root', server_password='AVNSHiB7Cg0kpa4D8JOESP', domain='rentmark.live'):
+def generate_deployment_prompt(
+    repo_link='https://github.com/moniruzzamanrony/rent-tech-api.git',
+    git_username='moniruzzamanrony',
+    git_password='YOUR_GIT_PASSWORD',
+    server_host='213.199.36.174',
+    server_port=22,
+    server_user='root',
+    server_password='YOUR_SERVER_PASSWORD',
+    domain='rentmark.live'
+):
     prompt = f"""
-        I want to deploy a project using Docker from a GitHub repository.
+        You are a DevOps automation agent.
 
+        Your task is to generate a COMPLETE and VALID deployment plan as JSON.
+
+        ========================
+        PROJECT DETAILS
+        ========================
         Repository URL: {repo_link}
         Git Username: {git_username}
         Git Password: {git_password}
         Domain: {domain}
 
-        SERVER ACCESS (only used if SERVER MODE is detected):
-        • SERVER_HOST: {server_host}
-        • SERVER_USER: {server_user}
-        • SERVER_PORT: {server_port}
-        • SERVER_PASSWORD: {server_password}
+        ========================
+        SERVER DETAILS
+        ========================
+        Host: {server_host}
+        Port: {server_port}
+        User: {server_user}
+        Password: {server_password}
 
-        IMPORTANT:
-        • Detect that deployment should run on REMOTE SERVER
-        • Prefer SERVER execution flow only
+        ========================
+        REQUIREMENTS
+        ========================
 
-        Execution Modes:
+        You must generate a step-by-step deployment command list for:
 
-        A) SERVER MODE:
-        • All commands must be executed via SSH using provided credentials
-        • Use format:
-        ssh user@host “command”
-        • Assume Ubuntu Linux server
-        • Install Docker if not installed
-        • Clone the GitHub repository if git username,password provided then use creadential for cloning
-        • Build Docker image
-        • Run Docker container
-        • Install and configure Nginx as reverse proxy
-        • Configure Nginx to forward renttech.com traffic to the Docker container
-        • Open required firewall ports (80, 443)
-        • Configure Let's Encrypt SSL (HTTPS) for the domain
+        1. Connect to the remote server via SSH
+        2. Install required dependencies:
+        - Docker
+        - Git
+        - Nginx
+        - Certbot (Let's Encrypt)
+        3. Clone the repository
+        4. Build Docker image
+        5. Run Docker container
+        6. Configure Nginx as reverse proxy
+        7. Configure domain routing to the container
+        8. Setup SSL (Let's Encrypt HTTPS)
+        9. Enable firewall ports (80, 443)
 
-        RESPONSE FORMAT:
+        ========================
+        CRITICAL RULES
+        ========================
 
-        Return the result as a JSON object:
+        - Output MUST be valid JSON array
+        - DO NOT truncate output
+        - DO NOT include explanations
+        - DO NOT include markdown or code blocks
+        - DO NOT include extra text
+        - ALL commands must be self-contained in a single line
+        - Avoid extremely long multi-line shell scripts
+        - Each command must be executable independently
+        - Use sshpass for password authentication
+        - Use the following SSH format:
+        sshpass -p '{server_password}' ssh {server_user}@{server_host} 'command'
+
+        - Replace placeholders properly in commands
+        - Ensure JSON strings are properly escaped
+        - Ensure no unclosed quotes or broken commands
+
+        ========================
+        OUTPUT FORMAT
+        ========================
+
         [
-            {{
-                "cmd": "command to execute",
-                "desc": "description of the command"
-            }}
-
+        {{
+            "cmd": "sshpass -p 'PASSWORD' ssh USER@HOST 'command'",
+            "desc": "Short description of what this command does"
+        }}
         ]
 
-        STRICT RULES:
-        • Output ONLY a valid JSON object
-        • Do NOT include any text before or after the JSON
-        • Do NOT include mode detection fields
-        • Do NOT include code blocks
-        • Do NOT include explanations
-        • Do NOT include markdown
-        • Commands must match SERVER execution only
-        • Must include all deployment steps including SSL setup
-    """
-    return prompt
+        ========================
+        IMPORTANT
+        ========================
 
+        - Return ONLY JSON
+        - No text before or after
+        - No partial JSON
+        - No comments
+        - No markdown
+        - No explanations
+
+        Now generate the deployment commands.
+        """
+    return prompt

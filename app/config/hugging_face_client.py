@@ -15,7 +15,7 @@ def call_hf(prompt: str):
         "messages": [
             {"role": "user", "content": prompt}
         ],
-        "max_tokens": 500,
+        "max_tokens": 1500,
         "temperature": 0.7
     }
 

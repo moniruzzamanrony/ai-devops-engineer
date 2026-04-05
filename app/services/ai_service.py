@@ -1,135 +1,94 @@
 from app.config.hugging_face_client import call_hf
 from collections import deque
-from app.dto.dev_ops_request import DevOpsRequest
 import json
 import re
 from app.tools.run_cmd import run_command
+import datetime
 
 ai_instruction_queue = deque()
 
 
+def log(message: str):
+    """Simple logger with timestamp"""
+    print(f"[{datetime.datetime.now()}] {message}")
+
+
 def ask_devops(prompt: str):
     """
-    Main DevOps AI pipeline:
-    1. Get AI response
-    2. Extract action types
-    3. Parse instructions
-    4. Queue instructions
+    DevOps AI pipeline with full logging and safety
     """
 
+    log("=== START DEVOPS PIPELINE ===")
+
     # -----------------------------
-    # Step 1: Get AI response
+    # Step 1: Call AI
     # -----------------------------
+    log("Sending prompt to AI...")
     res = call_hf(prompt)
+
+    log(f"Raw AI response: {res}")
+
+    # Detect truncation
+    finish_reason = res.get("choices", [{}])[0].get("finish_reason")
+    if finish_reason == "length":
+        log("⚠️ Warning: AI response was truncated")
 
     try:
         content = res["choices"][0]["message"]["content"]
     except Exception:
         content = str(res)
 
-    # -----------------------------
-    # Step 3: Parse instructions
-    # -----------------------------
-    instructions = parse_ai_instructions(content)
+    log(f"Extracted AI content:\n{content}")
 
     # -----------------------------
-    # Step 4: Queue instructions
+    # Step 2: Parse instructions
+    # -----------------------------
+    log("Parsing AI instructions...")
+    instructions = parse_ai_instructions(content)
+
+    log(f"Parsed instructions count: {len(instructions)}")
+
+    # -----------------------------
+    # Step 3: Queue instructions
     # -----------------------------
     for instruction in instructions:
         ai_instruction_queue.append(instruction)
 
+    # -----------------------------
+    # Step 4: Execute instructions
+    # -----------------------------
+    log("Executing queued instructions...")
+
     while ai_instruction_queue:
-        print("Executing instruction:", ai_instruction_queue.popleft())
-        run_command(ai_instruction_queue.popleft())
+        instruction = ai_instruction_queue.popleft()
+
+        # Validate instruction structure
+        if not isinstance(instruction, dict):
+            log(f"Skipping invalid instruction (not dict): {instruction}")
+            continue
+
+        cmd = instruction.get("cmd")
+        desc = instruction.get("desc", "No description")
+
+        if not cmd:
+            log(f"Skipping instruction with no cmd: {instruction}")
+            continue
+
+        log(f"Executing: {desc}")
+        log(f"CMD: {cmd}")
+
+        try:
+            result = run_command(cmd)
+            log(f"Command result: {result}")
+        except Exception as e:
+            log(f"Command execution failed: {e}")
+
+    log("=== DEVOPS PIPELINE COMPLETED ===")
 
     return {
         "response": res,
         "instructions": instructions
     }
-
-    """
-    Extract a single action type from AI response safely.
-
-    Returns:
-        str | None
-    """
-
-    print("Extracting action types from response:", ai_response)
-
-    if not ai_response:
-        return None
-
-    try:
-        # -----------------------------
-        # Step 1: Clean markdown
-        # -----------------------------
-        cleaned = re.sub(r"```json|```", "", ai_response).strip()
-
-        # -----------------------------
-        # Step 2: Try direct JSON parse
-        # -----------------------------
-        try:
-            data = json.loads(cleaned)
-
-            # OpenAI-style response
-            if isinstance(data, dict) and "choices" in data:
-                content = data["choices"][0]["message"]["content"]
-                return extract_action_types(content)
-
-            if isinstance(data, list) and len(data) > 0:
-                return str(data[0])
-
-        except Exception:
-            pass
-
-        # -----------------------------
-        # Step 3: Extract JSON array fallback
-        # -----------------------------
-        match = re.search(r"\[.*\]", cleaned, re.DOTALL)
-        if match:
-            json_str = match.group(0)
-
-            json_str = json_str.replace("\r", "")
-            json_str = fix_invalid_json_escapes(json_str)
-
-            json_str = re.sub(r",\s*}", "}", json_str)
-            json_str = re.sub(r",\s*]", "]", json_str)
-
-            data = json.loads(json_str)
-
-            if isinstance(data, list) and len(data) > 0:
-                return str(data[0])
-
-        # -----------------------------
-        # Step 4: Extract quoted values
-        # -----------------------------
-        matches = re.findall(
-            r"'(cmd|file|web_search|code_execution)'|\"(cmd|file|web_search|code_execution)\"",
-            ai_response
-        )
-
-        extracted = []
-        for m in matches:
-            extracted.extend([x for x in m if x])
-
-        if extracted:
-            return extracted[0]
-
-        # -----------------------------
-        # Step 5: Keyword fallback
-        # -----------------------------
-        keywords = ["cmd", "file", "web_search", "code_execution"]
-        lower_text = ai_response.lower()
-
-        for kw in keywords:
-            if kw in lower_text:
-                return kw
-
-    except Exception as e:
-        print("Action extraction error:", str(e))
-        print("Raw response:", ai_response)
-
-    return None
 
 
 # ============================================================
@@ -137,117 +96,117 @@ def ask_devops(prompt: str):
 # ============================================================
 
 def parse_ai_instructions(content: str):
+
+    if not content:
+        log("No AI content received")
+        return []
+
+    log("Cleaning AI content...")
+
+    cleaned = re.sub(r"```json|```", "", content).strip()
+
+    log(f"Cleaned content:\n{cleaned}")
+
+    # ✅ NEW: fix escape issues BEFORE parsing
+    cleaned = fix_invalid_json_escapes(cleaned)
+
+    log("After fixing invalid escapes:")
+    log(cleaned)
+
+    # Step 1: Try direct parsing
+    try:
+        data = json.loads(cleaned)
+        log(f"Direct JSON parsed successfully: {data}")
+
+        if isinstance(data, list):
+            return data
+        elif isinstance(data, dict):
+            for value in data.values():
+                if isinstance(value, list):
+                    return value
+            return [data]
+
+    except Exception as e:
+        log(f"Direct JSON parse failed: {e}")
     """
-    Robust JSON parser for AI output with auto-repair for broken JSON.
+    Robust JSON parser with logging and fallback handling
     """
 
     if not content:
+        log("No AI content received")
         return []
 
-    # Step 1: Remove markdown
+    log("Cleaning AI content...")
+
     cleaned = re.sub(r"```json|```", "", content).strip()
 
-    # Step 2: Try direct parsing
-    try:
-        return json.loads(cleaned)
-    except Exception:
-        pass
+    log(f"Cleaned content:\n{cleaned}")
 
-    # Step 3: Extract JSON array block
+    # -----------------------------
+    # Step 1: Direct JSON parse
+    # -----------------------------
     try:
-        match = re.search(r"\[.*\]", cleaned, re.DOTALL)
-        if not match:
+        data = json.loads(cleaned)
+
+        log("Direct JSON parsed successfully")
+
+        if isinstance(data, list):
+            return data
+        elif isinstance(data, dict):
+            for value in data.values():
+                if isinstance(value, list):
+                    return value
+            return [data]
+
+    except Exception as e:
+        log(f"Direct JSON parse failed: {e}")
+
+    # -----------------------------
+    # Step 2: Fallback extraction
+    # -----------------------------
+    try:
+        log("Trying fallback JSON extraction...")
+
+        start = cleaned.find('[')
+        end = cleaned.rfind(']')
+
+        if start == -1 or end == -1:
+            log("No JSON array found in content")
             return []
 
-        json_str = match.group(0)
+        json_str = cleaned[start:end + 1]
 
-        # Step 4: Normalize whitespace
+        log(f"Extracted JSON string:\n{json_str}")
+
+        # Normalize
         json_str = json_str.replace("\r", "").strip()
 
-        # Step 5: FIX broken newlines inside cmd strings
-        # Convert raw newlines inside JSON strings into escaped \n
-        json_str = re.sub(
-            r'("cmd"\s*:\s*")([^"]*?)\n([^"]*?)(")',
-            lambda m: m.group(1) + m.group(2) + "\\n" + m.group(3) + m.group(4),
-            json_str,
-            flags=re.DOTALL
-        )
-
-        # Step 6: Escape unescaped $ (common in nginx configs)
-        json_str = json_str.replace("$", "\\$")
-
-        # Step 7: Fix trailing commas
+        # Fix trailing commas
         json_str = re.sub(r",\s*}", "}", json_str)
         json_str = re.sub(r",\s*]", "]", json_str)
 
-        return json.loads(json_str)
+        data = json.loads(json_str)
+
+        log("Fallback JSON parsed successfully")
+
+        return data
 
     except Exception as e:
-        print("Parsing failed:", str(e))
-        print("Raw content:", content)
-
-    return []
-
-
-    """
-    Robust JSON parser for AI instruction output
-    Handles:
-    - markdown code blocks
-    - invalid escape sequences
-    - malformed JSON
-    """
-
-    if not content:
-        return []
-
-    try:
-        # Step 1: Clean markdown
-        cleaned = re.sub(r"```json|```", "", content).strip()
-
-        # Step 2: Fix escapes
-        cleaned = fix_invalid_json_escapes(cleaned)
-
-        # Step 3: Direct parse
-        return json.loads(cleaned)
-
-    except Exception:
-        try:
-            # Step 4: Extract JSON array fallback
-            match = re.search(r"\[.*\]", content, re.DOTALL)
-            if not match:
-                return []
-
-            json_str = match.group(0)
-
-            json_str = json_str.replace("\r", "")
-            json_str = fix_invalid_json_escapes(json_str)
-
-            json_str = re.sub(r",\s*}", "}", json_str)
-            json_str = re.sub(r",\s*]", "]", json_str)
-
-            return json.loads(json_str)
-
-        except Exception as e:
-            print("Parsing failed:", str(e))
-            print("Raw content:", content)
+        log(f"Fallback parsing failed: {e}")
+        log(f"Raw content:\n{content}")
 
     return []
 
 
 # ============================================================
-# ESCAPE FIXER
+# OPTIONAL ESCAPE FIXER
 # ============================================================
 
 def fix_invalid_json_escapes(text: str):
-    """
-    Fix invalid escape sequences in LLM outputs.
-    """
+    if not text:
+        return text
 
-    # Prevent broken escape sequences
-    text = text.replace("\\$", "\\\\$")
-    text = text.replace("\\'", "'")
+    # Fix invalid backslashes like \n, \namespace, etc.
+    text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', text)
 
-    # Fix stray backslashes not part of valid escapes
-    text = re.sub(r'\\(?!["\\/bfnrt])', r"\\\\", text)
-
-    return text     
+    return text
