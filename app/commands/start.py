@@ -1,4 +1,5 @@
 import typer
+from app.core.config import GIT_USERNAME, GIT_ACCESS_TOKEN, get_server_credential
 from app.tools.temp_credential import save_json
 from app.utils import prompt_text
 from app.services.ai_service import ask_devops
@@ -17,32 +18,39 @@ def user_interaction():
     input_choice = input("Please enter the number corresponding to your choice: ")
     if input_choice == "1":
         print("\n---Server setup and deployment---")
-        # repo_link = input("Enter your git repository link: ")
-        # git_username = input("Enter git username:")
-        # git_password = input("Enter git password:")
-        # server_host = input("Enter server host: ")
-        # server_port = input("Enter server ssh port: ")
-        # server_user = input("Enter server username: ")
-        # server_password = input("Enter server password: ")
-        # domain = input("Enter dimain(Alreday dns configured for the server): ")
+        repo_link = input("Enter your git repository link: ")
+        is_git_configured = input("Did you configure git:(y/n)")
+        if is_git_configured is 'n':
+            git_username = input("Enter git username:")
+            git_access_token = input("Enter git password:")
+        else:
+            git_username = str(GIT_USERNAME)
+            git_access_token = str(GIT_ACCESS_TOKEN)
 
-        repo_link = 'https://github.com/moniruzzamanrony/rent-tech-api.git',
-        git_username = 'moniruzzamanrony',
-        git_access_token = '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',
-        server_host = '213.199.36.174',
-        server_port = 22,
-        server_user = 'root',
-        server_password = 'YOUR_SERVER_PASSWORD',
-        domain = 'rentmark.live'
+        is_server_configured = input("Did you configure server:(y/n)")
+        if is_server_configured is 'n':
+            server_host = input("Enter server host: ")
+            server_port = input("Enter server ssh port: ")
+            server_user = input("Enter server username: ")
+            server_password = input("Enter server password: ")
+        else:
+            server_name = input("Enter server name: (Check from .env)")
+            server_host = get_server_credential(server_name.capitalize(),"SERVER_NAME")
+            server_port = get_server_credential(server_name.capitalize(),"SERVER_PORT")
+            server_user = get_server_credential(server_name.capitalize(),"SERVER_USERNAME")
+            server_password = get_server_credential(server_name.capitalize(),"SERVER_PASSWORD")
+
+        domain = input("Enter domain (Already dns configured for the server): ")
+
         data = {
-            "repo_link": "https://github.com/moniruzzamanrony/rent-tech-api.git",
-            "git_username": "moniruzzamanrony",
-            "git_access_token": "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",
-            "server_host": "213.199.36.174",
-            "server_port": 22,
-            "server_user": "root",
-            "server_password": "YOUR_SERVER_PASSWORD",
-            "domain": "rentmark.live"
+            "repo_link": repo_link,
+            "git_username": git_username,
+            "git_access_token": git_access_token,
+            "server_host": server_host,
+            "server_port": int(server_port) if isinstance(server_port, str) and server_port.isdigit() else server_port,
+            "server_user": server_user,
+            "server_password": server_password,
+            "domain": domain
         }
 
         save_json(data)
