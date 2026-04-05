@@ -49,6 +49,7 @@ def generate_deployment_prompt(
 
         You must generate a step-by-step deployment command list for:
 
+        0. install sshpass if not already installed
         1. Connect to the remote server via SSH
         2. Install required dependencies:
         - 
