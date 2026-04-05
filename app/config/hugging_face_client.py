@@ -1,5 +1,5 @@
 import requests
-from core.config import HF_API_KEY, HF_API_URL, MODEL_AI
+from app.core.config import HF_API_KEY, HF_API_URL, MODEL_AI
 import requests
 
 

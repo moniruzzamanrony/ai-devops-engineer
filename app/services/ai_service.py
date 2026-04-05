@@ -1,9 +1,9 @@
-from config.hugging_face_client import call_hf
+from app.config.hugging_face_client import call_hf
 from collections import deque
-from dto.dev_ops_request import DevOpsRequest
+from app.dto.dev_ops_request import DevOpsRequest
 import json
 import re
-from services.action_type_enum import ActionTypes
+from app.services.action_type_enum import ActionTypes
 
 ai_instruction_queue = deque()
 

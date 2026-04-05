@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "devops-ask"
+version = "0.1.0"
+description = "🚀 Personal DevOps Assistant CLI powered by AI"
+authors = [
+    { name = "Moniruzzaman Rony" }
+]
+readme = "README.md"
+requires-python = ">=3.9"
+
+dependencies = [
+    "typer[all]",
+    "requests",
+    "python-dotenv"
+]
+
+[project.scripts]
+devops-ask = "devops_ask.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/moniruzzamanrony/ai-assistant-devops"
+Repository = "https://github.com/moniruzzamanrony/ai-assistant-devops"
