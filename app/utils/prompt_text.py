@@ -51,6 +51,7 @@ def generate_deployment_prompt(
 
         1. Connect to the remote server via SSH
         2. Install required dependencies:
+        - 
         - Docker
         - Git
         - Nginx
