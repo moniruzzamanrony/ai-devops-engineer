@@ -3,7 +3,7 @@ from collections import deque
 from app.dto.dev_ops_request import DevOpsRequest
 import json
 import re
-from app.services.action_type_enum import ActionTypes
+from app.tools.run_cmd import run_command
 
 ai_instruction_queue = deque()
 
@@ -28,61 +28,6 @@ def ask_devops(prompt: str):
         content = str(res)
 
     # -----------------------------
-    # Step 2: Extract action types
-    # -----------------------------
-    action_prompt = f"""
-    You are an action classifier.
-
-    Analyze the user request and decide whether it requires:
-    - executing terminal commands (cmd)
-    - or just a normal text response (text)
-
-    Return STRICT JSON ONLY.
-
-    Rules:
-    - Return only a JSON array with a single value
-    - No explanation
-    - No extra text
-    - No markdown
-
-    Output format examples:
-    ["cmd"]
-    ["text"]
-
-    Decision rules:
-    - Return "cmd" if the request involves:
-    - Docker setup
-    - Server deployment
-    - Running shell commands
-    - Installing software
-    - System configuration
-    - DevOps / automation tasks
-
-    - Return "text" if the request involves:
-    - Questions
-    - Explanations
-    - Information lookup
-    - General conversation
-    - No system/terminal execution required
-
-    User Request:
-    {prompt}
-
-    retunn the action type as a JSON array with a single value, either "cmd" or "text".
-    """
-
-    action_res = call_hf(action_prompt)
-
-    try:
-        action_content = action_res["choices"][0]["message"]["content"]
-    except Exception:
-        action_content = str(action_res)
-
-    action_types = extract_action_types(action_content)
-
-    print("Detected Action Types:", action_types)
-
-    # -----------------------------
     # Step 3: Parse instructions
     # -----------------------------
     instructions = parse_ai_instructions(content)
@@ -93,25 +38,15 @@ def ask_devops(prompt: str):
     for instruction in instructions:
         ai_instruction_queue.append(instruction)
 
-    # -----------------------------
-    # Step 5: Example execution trigger
-    # -----------------------------
-    if action_types and ActionTypes.CMD.value in action_types:
-        if ai_instruction_queue:
-            print("Executing instruction:", ai_instruction_queue.popleft())
+    while ai_instruction_queue:
+        print("Executing instruction:", ai_instruction_queue.popleft())
+        run_command(ai_instruction_queue.popleft())
 
     return {
         "response": res,
-        "action_types": action_types,
         "instructions": instructions
     }
 
-
-# ============================================================
-# ACTION TYPE EXTRACTION (ROBUST)
-# ============================================================
-
-def extract_action_types(ai_response: str):
     """
     Extract a single action type from AI response safely.
 

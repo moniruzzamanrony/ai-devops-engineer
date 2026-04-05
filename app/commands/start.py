@@ -11,14 +11,17 @@ def start():
     print("2. Issue diagnosis and troubleshooting")
     input_choice = input("Please enter the number corresponding to your choice: ")
     if input_choice == "1":
-        print("[->1] Tell me about your server setup and deployment needs.\n")
+        print("\n---Server setup and deployment---")
         repo_link = input("Enter your git repository link: ")
+        git_username = input("Enter git username:")
+        git_password = input("Enter git password:")
         server_host = input("Enter server host: ")
         server_port = input("Enter server ssh port: ")
         server_user = input("Enter server username: ")
         server_password = input("Enter server password: ")
+        domain = input("Enter dimain(Alreday dns configured for the server): ")
 
-        prompt = prompt_text.generate_deployment_prompt(repo_link, server_host, server_port, server_user, server_password)
+        prompt = prompt_text.generate_deployment_prompt(repo_link,git_username,git_password, server_host, server_port, server_user, server_password,domain)
         ask_devops(prompt)
         # Add your server setup and deployment logic here
     elif input_choice == "2":

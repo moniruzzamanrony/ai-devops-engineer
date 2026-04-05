@@ -13,12 +13,14 @@ def get_banner():
     return banner
 
 
-def generate_deployment_prompt(repo_link, server_host, server_port, server_user, server_password):
+def generate_deployment_prompt(repo_link,git_username,git_password, server_host, server_port, server_user, server_password,domain):
     prompt = f"""
         I want to deploy a project using Docker from a GitHub repository.
 
         Repository URL: {repo_link}
-        Domain: renttech.com
+        Git Username: {git_username}
+        Git Password: {git_password}
+        Domain: {domain}
 
         SERVER ACCESS (only used if SERVER MODE is detected):
         • SERVER_HOST: {server_host}
@@ -28,9 +30,6 @@ def generate_deployment_prompt(repo_link, server_host, server_port, server_user,
 
         IMPORTANT:
         • Detect that deployment should run on REMOTE SERVER
-        • If the prompt contains the word “deploy”, ALWAYS choose SERVER MODE
-        • Do NOT execute LOCAL MODE in any case
-        • Do NOT include any mode indicator in the response
         • Prefer SERVER execution flow only
 
         Execution Modes:
@@ -41,21 +40,21 @@ def generate_deployment_prompt(repo_link, server_host, server_port, server_user,
         ssh user@host “command”
         • Assume Ubuntu Linux server
         • Install Docker if not installed
-        • Clone the GitHub repository
+        • Clone the GitHub repository if git username,password provided then use creadential for cloning
         • Build Docker image
         • Run Docker container
         • Install and configure Nginx as reverse proxy
         • Configure Nginx to forward renttech.com traffic to the Docker container
         • Open required firewall ports (80, 443)
-        • Configure Let’s Encrypt SSL (HTTPS) for the domain
+        • Configure Let's Encrypt SSL (HTTPS) for the domain
 
         RESPONSE FORMAT:
 
         Return the result as a JSON object:
         [
         {
-        “cmd”: “command to execute”,
-        “desc”: “description of the command”
+        "cmd": "command to execute",
+        "desc": "description of the command"
         }
         ]
 
@@ -68,7 +67,6 @@ def generate_deployment_prompt(repo_link, server_host, server_port, server_user,
         • Do NOT include markdown
         • Commands must match SERVER execution only
         • Must include all deployment steps including SSL setup
-        • Do NOT include any mode indicator like DETECTED_MODE or SERVER_MODE in the response
     """
     return prompt
 
