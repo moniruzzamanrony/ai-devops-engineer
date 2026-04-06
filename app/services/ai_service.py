@@ -8,7 +8,7 @@ from collections import deque
 
 from app.config.hugging_face_client import call_hf
 from app.tools.run_cmd import run_command
-from app.utils.prompt_text import generate_result_analysis_prompt, generate_error_fix_prompt
+from app.utils.prompt_text import generate_result_analysis_prompt, generate_error_fix_prompt, get_valid_json_response
 
 prompt_temp = None
 error_block =[]
@@ -188,45 +188,90 @@ def is_valid_command(cmd: str) -> bool:
 # PARSER
 # ============================================================
 
-def parse_ai_instructions(content: str):
+import json
+import re
+
+def parse_ai_instructions(content: str, max_retries=3):
     if not content:
         log("No AI content received", "WARN")
         return []
+
     log(f"Requested content: {content}", "INFO")
+
     cleaned = re.sub(r"```json|```", "", content).strip()
     cleaned = fix_invalid_json_escapes(cleaned)
 
-    # Direct parse
-    try:
-        data = json.loads(cleaned)
-        log("Direct JSON parsed successfully", "INFO")
-        return normalize_output(data)
-    except Exception as e:
-        log(f"Direct JSON parse failed: {e}", "ERROR")
+    for attempt in range(max_retries):
 
-    # Fallback parse
-    try:
-        start = cleaned.find('[')
-        end = cleaned.rfind(']')
+        # ------------------------
+        # 1. Direct JSON parse
+        # ------------------------
+        try:
+            data = json.loads(cleaned)
+            log("Direct JSON parsed successfully", "INFO")
+            return normalize_output(data)
 
-        if start == -1 or end == -1:
-            log("No JSON array found", "ERROR")
-            return []
+        except Exception as e:
+            log(f"Direct JSON parse failed (attempt {attempt+1}): {e}", "ERROR")
 
-        json_str = cleaned[start:end + 1]
-        json_str = json_str.replace("\r", "").strip()
+        # ------------------------
+        # 2. Fallback extraction
+        # ------------------------
+        try:
+            start = cleaned.find('[')
+            end = cleaned.rfind(']')
 
-        json_str = re.sub(r",\s*}", "}", json_str)
-        json_str = re.sub(r",\s*]", "]", json_str)
+            if start != -1 and end != -1 and end > start:
+                json_str = cleaned[start:end + 1]
+                json_str = json_str.replace("\r", "").strip()
 
-        data = json.loads(json_str)
-        log("Fallback JSON parsed successfully", "INFO")
+                json_str = re.sub(r",\s*}", "}", json_str)
+                json_str = re.sub(r",\s*]", "]", json_str)
 
-        return normalize_output(data)
+                data = json.loads(json_str)
+                log("Fallback JSON parsed successfully", "INFO")
+                return normalize_output(data)
 
-    except Exception as e:
-        log(f"Fallback parsing failed: {e}", "ERROR")
+        except Exception as e:
+            log(f"Fallback parsing failed: {e}", "ERROR")
 
+        # ------------------------
+        # 3. Retry via AI
+        # ------------------------
+        log("Re-prompting AI for valid JSON...", "WARN")
+
+        retry_prompt = f"""
+            Your previous response was invalid or incomplete JSON.
+            
+            You MUST return ONLY a valid JSON array of strings.
+            
+            Rules:
+            - No markdown
+            - No explanations
+            - No extra text
+            - No truncation
+            - Output must start with [ and end with ]
+            
+            Fix and return ONLY valid JSON.
+            
+            Previous response:
+            {cleaned}
+            """
+
+        res = call_hf(retry_prompt)
+
+        try:
+            cleaned = res["choices"][0]["message"]["content"]
+        except Exception:
+            cleaned = str(res)
+
+        cleaned = re.sub(r"```json|```", "", cleaned).strip()
+
+        finish_reason = res.get("choices", [{}])[0].get("finish_reason")
+        if finish_reason == "length":
+            log("⚠️ AI response truncated", "WARN")
+
+    log("All parsing attempts failed", "ERROR")
     return []
 
 # ============================================================

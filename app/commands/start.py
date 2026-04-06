@@ -62,7 +62,7 @@ def user_interaction():
                 raise ValueError("Server credentials not found in .env")
 
         domain = input("Enter domain (Already DNS configured for the server): ").strip()
-        domain = 'api.rentmark.live'
+        domain = 'mapmark.live'
         if is_empty(domain):
             raise ValueError("Domain is required")
 

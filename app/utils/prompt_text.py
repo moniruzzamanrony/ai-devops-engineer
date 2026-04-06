@@ -1,3 +1,5 @@
+import json
+
 from app.tools.temp_credential import get_value
 
 
@@ -19,14 +21,13 @@ def generate_deployment_prompt():
     prompt = f"""
 You are a DevOps automation agent.
 
-Your task is to generate a COMPLETE and VALID deployment plan as a STRING array of executable commands.
+Your task is to generate a COMPLETE and VALID deployment plan as a JSON string array of executable commands.
 
 ========================
 PROJECT DETAILS
 ========================
+Framework: SpringBoot
 Repository URL: {get_value('repo_link')}
-Git Username: {get_value('git_username')}
-Git Access Token: {get_value('git_access_token')}
 Domain: {get_value('domain')}
 
 ========================
@@ -43,42 +44,43 @@ REQUIREMENTS
 
 Generate a step-by-step deployment command sequence that includes:
 
-0. Install sshpass (if not already installed)
-1. Install dependencies on the server (if not already installed):
-   - Docker (with verification)
-   - Git (with verification)
-   - Nginx (with verification)
-   - Certbot (with verification)
-2. Clone the repository (only if not already cloned)
-3. Build Docker image (only if not already built)
-4. Run Docker container (only if not already running)
-5. Configure Nginx (only if not already configured)
-6. Configure domain routing
-7. Setup SSL using Let's Encrypt (only if not already exists)
-8. Enable firewall ports (8080, 443) and ensure port 22 is NOT removed
+1. Install sshpass (if not already installed)
+2. Install dependencies on the server (if not already installed):
+   - Docker (verify before install)
+   - Git (verify before install)
+   - Nginx (verify before install)
+   - Certbot (verify before install)
 
+3. Clone the repository
+4. Build Docker image 
+5. Run Docker container (if not already running then terminate previous and run new)
+6. Configure Nginx reverse proxy for the {get_value('domain')}
+7. Create/update nginx config file for the {get_value('domain')}
+8. Ensure Docker app is exposed on port 8080
+9. Setup SSL using Let's Encrypt (only if certificate does not exist)
+10. Configure firewall:
+   - Allow ports: 22, 80, 443, 8080
+   - Do NOT remove SSH access
+11. verify any instruction is missing if YES then add those
 ========================
 IDEMPOTENT RULE (VERY IMPORTANT)
 ========================
 
-- BEFORE running ANY command, you MUST check:
-  - If the step is already completed → SKIP execution
-  - If not completed → execute the command
+Each command must be safe to run multiple times without breaking the system.
 
-- Use safe patterns like:
-  - command || install_command
-  - condition && skip || run
-  - check using:
-    - command -v
-    - systemctl status
-    - docker ps / docker images
-    - test -d / test -f
+Before executing any action:
+- Check if already installed:
+  command -v docker || install
+- Check services:
+  systemctl is-active nginx || start
+- Check files/folders:
+  [ -d repo ] || git clone ...
+- Check containers:
+  docker ps | grep || run container
 
-- Examples:
-  - command -v docker || apt install -y docker.io
-  - [ -d repo ] || git clone ...
-  - docker ps | grep container || docker run ...
-  - systemctl is-active nginx || systemctl start nginx
+Use conditional execution patterns like:
+- command || install_command
+- test conditions && skip || run
 
 ========================
 COMMAND FORMAT RULES
@@ -99,16 +101,15 @@ COMMAND FORMAT RULES
 CRITICAL RULES
 ========================
 
-- Output MUST be a valid STRING array
+- Output MUST be a valid JSON array of strings
 - DO NOT include explanations
 - DO NOT include markdown
 - DO NOT include extra text
 - DO NOT include comments
 - DO NOT truncate output
-- Ensure valid JSON
-- Ensure proper escaping
-- Ensure no broken quotes
-- Each command must be idempotent and safe to re-run
+- Ensure valid JSON syntax
+- Ensure proper escaping of quotes
+- Each command must be idempotent
 
 ========================
 OUTPUT FORMAT
@@ -123,10 +124,9 @@ OUTPUT FORMAT
 IMPORTANT
 ========================
 
-- Return ONLY STRING array
-- No text before or after JSON
-- No partial output
-- No explanations
+Return ONLY the JSON array.
+No text before or after.
+No explanations.
 
 Now generate the deployment commands.
 """
@@ -314,3 +314,39 @@ IMPORTANT
 Now analyze and return the result.
 """
     return prompt
+
+
+def get_valid_json_response(call_ai_fn, prompt, max_retries=3):
+    """
+    call_ai_fn: function that sends prompt to AI and returns response (string)
+    prompt: initial prompt
+    """
+
+    current_prompt = prompt
+
+    for attempt in range(max_retries):
+        response = call_ai_fn(current_prompt)
+
+        try:
+            parsed = json.loads(response)
+            return parsed
+
+        except json.JSONDecodeError:
+            # Re-prompt with correction instruction
+            current_prompt = f"""
+            Your previous response was invalid JSON.
+            
+            You MUST return ONLY a valid JSON array of strings.
+            
+            No explanation. No markdown. No extra text.
+            
+            Fix and return correct JSON.
+            
+            Original request:
+            {prompt}
+            
+            Your previous response:
+            {response}
+            """
+
+    raise Exception("Failed to get valid JSON after retries")

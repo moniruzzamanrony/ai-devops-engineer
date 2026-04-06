@@ -17,4 +17,4 @@ def get_server_credential(env_key: str,):
 
 HF_API_URL = "https://router.huggingface.co/v1/chat/completions"
 
-MODEL_AI="meta-llama/Llama-3.1-8B-Instruct"
+MODEL_AI="Qwen/Qwen2.5-7B-Instruct"
