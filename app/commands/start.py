@@ -35,7 +35,7 @@ def user_interaction():
     if input_choice == "2":
         print("\n---Server setup and deployment---")
 
-        app_type = input("Choice your app type (1. Dockerize app. 2. Node frontend: ").strip()
+        app_type = input("Choice your app type (1. Dockerize app. 2. Node frontend): ").strip()
         repo_link = input("Enter your git repository link: ").strip()
         enter_domain = input("Enter your domain: ").strip()
         if app_type == "1":

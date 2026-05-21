@@ -450,6 +450,7 @@ def generate_server_setup_prompt(option: str):
         13. Use systemctl enable/start only if required.
         14. Include verification commands for every setup section.
         15. Ensure proper JSON escaping.
+        16. Install always latest version
         
         ==================================================
         SSH COMMAND FORMAT
@@ -505,6 +506,8 @@ def generate_dockerize_app_deploy_prompt(repo_link: str, enter_domain: str):
         "https://github.com/",
         f"https://{GIT_USERNAME}:{GIT_ACCESS_TOKEN}@github.com/",
     )
+    nginx_conf = f"/etc/nginx/sites-available/{enter_domain}"
+    nginx_link = f"/etc/nginx/sites-enabled/{enter_domain}"
 
     prompt = f"""You are a DevOps automation agent. Output ONLY a valid JSON array. No prose. No markdown. No code fences.
 
@@ -514,48 +517,70 @@ CONTEXT (use these literal values):
 - Repo dir on server: {repo_dir}
 - Domain: {enter_domain}
 - Clone URL with auth: {auth_repo_url}
-- docker, docker compose, nginx, certbot, git are ALREADY INSTALLED — never install, apt-get, snap, or sudo apt.
+- Nginx config path: {nginx_conf}
+- Nginx symlink path: {nginx_link}
+- docker, docker compose plugin, docker-compose, nginx, certbot, git are ALREADY INSTALLED — never install, apt-get, snap, or sudo apt.
 
 ============================================================
-HOW YOUR OUTPUT IS EXECUTED — READ CAREFULLY
+HOW YOUR OUTPUT IS EXECUTED
 ============================================================
-The runtime takes each "cmd" string and runs it on the remote server as `sshpass ... ssh ... '<your cmd>'`. The single-quote wrapping is added BY THE RUNTIME. You only emit the REMOTE shell command itself. Do NOT include `sshpass`, `ssh`, or any wrapper.
+The runtime wraps each "cmd" with `sshpass ... ssh ... '<your cmd>'`. You output ONLY the remote shell command itself. Each command's stdout/stderr is logged to the user as its own line, so simpler commands = clearer logs.
 
 ============================================================
-JSON RULES (the only rules that matter)
+JSON RULES
 ============================================================
-1. Each "cmd" entry is a single-string REMOTE shell command. No sshpass, no ssh, no nesting.
-2. Inside JSON strings, the ONLY valid escapes are: \\"  \\\\  \\/  \\b  \\f  \\n  \\r  \\t  \\uXXXX. Anything else is invalid JSON.
-3. Use bare $ for shell variables and substitutions: $PORT, $(grep ...). NEVER prefix $ with a backslash.
-4. For shell strings, use DOUBLE quotes ("..."). Escape inner " as \\" in the JSON.
-5. Do NOT use single quotes inside the remote command — they conflict with the runtime's single-quote wrapping. Use double quotes for any shell string you need.
+1. Each "cmd" entry is a single-string remote shell command. No sshpass, no ssh.
+2. Valid JSON escapes ONLY: \\"  \\\\  \\/  \\b  \\f  \\n  \\r  \\t  \\uXXXX.
+3. Use bare $ for shell variables ($PORT, $(...)). NEVER prefix $ with backslash.
+4. Use DOUBLE quotes for shell strings ("..."). Escape inner " as \\" in JSON.
+5. Do NOT use single quotes inside the remote command.
+
+============================================================
+KEEP COMMANDS DISCRETE — ONE ACTION PER STEP
+============================================================
+Do NOT chain commands with && or || unless one of these applies:
+  (a) shell state must flow between them (e.g. $PORT detected then used in the SAME command), or
+  (b) it's the only idempotent form (e.g. test -d X && git pull || git clone), or
+  (c) you're listing alternative implementations of the same action (e.g. compose fallbacks).
+Otherwise each action gets its own step so the server's output prints under its own log entry.
 
 SCHEMA: {{"label": "short name", "cmd": ["<remote shell command>"]}}
 Omit "verify_cmd".
 
 ============================================================
-PRODUCE EXACTLY THESE 4 STEPS, IN ORDER
+PRODUCE EXACTLY THESE 7 STEPS, IN ORDER
 ============================================================
 
-Step 1 — Clone or update {repo_dir}:
+Step 1 — Clone or update {repo_dir} (idempotent — chain unavoidable):
     test -d {repo_dir} && git -C {repo_dir} pull || git clone {auth_repo_url} {repo_dir}
 
-Step 2 — Bring up the compose stack. The repo always contains docker-compose.yml (or compose.yaml / compose.yml). Tries multiple docker compose invocations in order. NO install commands. Escape inner " as \\" in JSON:
-    cd {repo_dir} && ( [ -f docker-compose.yml ] || [ -f compose.yaml ] || [ -f compose.yml ] || {{ echo "ERROR: no docker-compose.yml / compose.yaml / compose.yml found in {repo_dir}" >&2; exit 1; }} ) && ( docker compose up -d --build || docker-compose up -d --build || /usr/libexec/docker/cli-plugins/docker-compose up -d --build || /usr/lib/docker/cli-plugins/docker-compose up -d --build || {{ echo "ERROR: docker compose did not run. None of the available invocations worked on this server." >&2; exit 1; }} )
+Step 2 — Bring up the compose stack (alternatives — chain allowed; NO install commands):
+    cd {repo_dir} && ( docker compose up -d --build || docker-compose up -d --build || /usr/libexec/docker/cli-plugins/docker-compose up -d --build || /usr/lib/docker/cli-plugins/docker-compose up -d --build )
 
-Step 3 — Detect the exposed port from the compose file and write a single-line Nginx vhost for {enter_domain}. Escape inner " as \\" in JSON:
-    PORT=$(cd {repo_dir} && grep -oP "(?<=- )[0-9]+(?=:)" docker-compose.yml 2>/dev/null || grep -oP "(?<=- )[0-9]+(?=:)" compose.yaml 2>/dev/null || grep -oP "(?<=- )[0-9]+(?=:)" compose.yml 2>/dev/null | head -1) && echo "server {{ listen 80; server_name {enter_domain}; location / {{ proxy_pass http://127.0.0.1:$PORT; }} }}" > /etc/nginx/sites-available/{enter_domain} && ln -sf /etc/nginx/sites-available/{enter_domain} /etc/nginx/sites-enabled/{enter_domain} && nginx -t && systemctl reload nginx
+Step 3 — Detect port from the compose file and write the nginx vhost (state must flow — chain unavoidable):
+    PORT=$(grep -oP "(?<=- )[0-9]+(?=:)" {repo_dir}/docker-compose.yml 2>/dev/null || grep -oP "(?<=- )[0-9]+(?=:)" {repo_dir}/compose.yaml 2>/dev/null || grep -oP "(?<=- )[0-9]+(?=:)" {repo_dir}/compose.yml 2>/dev/null | head -1) && echo "server {{ listen 80; server_name {enter_domain}; location / {{ proxy_pass http://127.0.0.1:$PORT; }} }}" > {nginx_conf}
 
-Step 4 — Issue SSL (idempotent; certbot is a no-op if cert already exists):
+Step 4 — Enable the vhost (single command):
+    ln -sf {nginx_conf} {nginx_link}
+
+Step 5 — Test nginx config (single command):
+    nginx -t
+
+Step 6 — Reload nginx (single command):
+    systemctl reload nginx
+
+Step 7 — Issue SSL certificate (single command):
     certbot --nginx -n --agree-tos -m admin@{enter_domain} -d {enter_domain}
 
-Return ONLY the JSON array containing exactly those 4 steps in that order. Nothing else."""
+Return ONLY the JSON array containing exactly those 7 steps in that order. Nothing else."""
 
     return prompt
 
 def generate_static_app_deploy_prompt(enter_domain: str):
 
     web_root = f"/var/www/{enter_domain}"
+    nginx_conf = f"/etc/nginx/sites-available/{enter_domain}"
+    nginx_link = f"/etc/nginx/sites-enabled/{enter_domain}"
 
     prompt = f"""You are a DevOps automation agent. Output ONLY a valid JSON array. No prose. No markdown. No code fences.
 
@@ -564,37 +589,56 @@ TASK: Deploy a basic static site for {enter_domain}.
 CONTEXT (use these literal values):
 - Web root on server: {web_root}
 - Domain: {enter_domain}
+- Nginx config path: {nginx_conf}
+- Nginx symlink path: {nginx_link}
 - nginx, certbot are ALREADY INSTALLED — never install, apt-get, snap, or sudo apt.
 
 ============================================================
-HOW YOUR OUTPUT IS EXECUTED — READ CAREFULLY
+HOW YOUR OUTPUT IS EXECUTED
 ============================================================
-The runtime takes each "cmd" string and runs it on the remote server as `sshpass ... ssh ... '<your cmd>'`. The single-quote wrapping is added BY THE RUNTIME. You only emit the REMOTE shell command itself. Do NOT include `sshpass`, `ssh`, or any wrapper.
+The runtime wraps each "cmd" with `sshpass ... ssh ... '<your cmd>'`. You output ONLY the remote shell command. Each command's stdout/stderr is logged to the user as its own line, so simpler commands = clearer logs.
 
 ============================================================
 JSON RULES
 ============================================================
-1. Each "cmd" entry is a single-string REMOTE shell command. No sshpass, no ssh.
-2. Inside JSON strings, valid escapes are ONLY: \\"  \\\\  \\/  \\b  \\f  \\n  \\r  \\t  \\uXXXX.
+1. Each "cmd" entry is a single-string remote shell command. No sshpass, no ssh.
+2. Valid JSON escapes ONLY: \\"  \\\\  \\/  \\b  \\f  \\n  \\r  \\t  \\uXXXX.
 3. Use DOUBLE quotes for shell strings ("..."). Escape inner " as \\" in JSON.
-4. Do NOT use single quotes inside the remote command (they conflict with the runtime wrapper).
+4. Do NOT use single quotes inside the remote command.
+
+============================================================
+KEEP COMMANDS DISCRETE — ONE ACTION PER STEP
+============================================================
+Do NOT chain commands with && or ||. Each action gets its own step so the server's output prints under its own log entry.
 
 SCHEMA: {{"label": "short name", "cmd": ["<remote shell command>"]}}
 Omit "verify_cmd".
 
 ============================================================
-PRODUCE EXACTLY THESE 3 STEPS, IN ORDER
+PRODUCE EXACTLY THESE 7 STEPS, IN ORDER
 ============================================================
 
-Step 1 — Create the web root and a basic index.html (escape the inner " as \\" in JSON):
-    mkdir -p {web_root} && echo "<!doctype html><html><body><h1>{enter_domain}</h1></body></html>" > {web_root}/index.html
+Step 1 — Create the web root directory:
+    mkdir -p {web_root}
 
-Step 2 — Write a single-line Nginx vhost serving {web_root}:
-    echo "server {{ listen 80; server_name {enter_domain}; root {web_root}; index index.html; }}" > /etc/nginx/sites-available/{enter_domain} && ln -sf /etc/nginx/sites-available/{enter_domain} /etc/nginx/sites-enabled/{enter_domain} && nginx -t && systemctl reload nginx
+Step 2 — Write a basic index.html:
+    echo "<!doctype html><html><body><h1>{enter_domain}</h1></body></html>" > {web_root}/index.html
 
-Step 3 — Issue SSL (idempotent):
+Step 3 — Write the nginx vhost:
+    echo "server {{ listen 80; server_name {enter_domain}; root {web_root}; index index.html; }}" > {nginx_conf}
+
+Step 4 — Enable the vhost:
+    ln -sf {nginx_conf} {nginx_link}
+
+Step 5 — Test nginx config:
+    nginx -t
+
+Step 6 — Reload nginx:
+    systemctl reload nginx
+
+Step 7 — Issue SSL certificate:
     certbot --nginx -n --agree-tos -m admin@{enter_domain} -d {enter_domain}
 
-Return ONLY the JSON array containing exactly those 3 steps in that order. Nothing else."""
+Return ONLY the JSON array containing exactly those 7 steps in that order. Nothing else."""
 
     return prompt
