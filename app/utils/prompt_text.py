@@ -392,7 +392,7 @@ def get_valid_json_response(call_ai_fn, prompt, max_retries=3):
 
 def generate_server_setup_prompt(option: str):
     if option == '1':
-        task = 'Install Docker, Nginx, and Certbot on the target Ubuntu server.'
+        task = 'Install Docker,Docker compose plugin, Nginx, and Certbot on the target Ubuntu server.'
     else:
         raise ValueError("Invalid option selected")
 
@@ -481,7 +481,7 @@ def generate_server_setup_prompt(option: str):
         Generate commands for:
         
         1. Updating apt package index
-        2. Installing Docker if missing
+        2. Installing Docker if missing And Installing Docker compose plugin if missing
         3. Enabling and starting Docker
         4. Installing Nginx if missing
         5. Enabling and starting Nginx
@@ -540,11 +540,11 @@ PRODUCE EXACTLY THESE 4 STEPS, IN ORDER
 Step 1 — Clone or update {repo_dir}:
     test -d {repo_dir} && git -C {repo_dir} pull || git clone {auth_repo_url} {repo_dir}
 
-Step 2 — Build and run (compose if present, Dockerfile fallback). Notice the inner double quotes — escape them as \\" in JSON:
-    cd {repo_dir} && if [ -f docker-compose.yml ] || [ -f compose.yaml ] || [ -f compose.yml ]; then docker compose up -d --build; else PORT=$(grep -oE "EXPOSE [0-9]+" Dockerfile | grep -oE "[0-9]+" | head -1); docker build -t {repo_name}:latest . && docker rm -f {repo_name} 2>/dev/null; docker run -d --name {repo_name} --restart unless-stopped -p $PORT:$PORT {repo_name}:latest; fi
+Step 2 — Bring up the compose stack. The repo always contains docker-compose.yml (or compose.yaml / compose.yml). Tries multiple docker compose invocations in order. NO install commands. Escape inner " as \\" in JSON:
+    cd {repo_dir} && ( [ -f docker-compose.yml ] || [ -f compose.yaml ] || [ -f compose.yml ] || {{ echo "ERROR: no docker-compose.yml / compose.yaml / compose.yml found in {repo_dir}" >&2; exit 1; }} ) && ( docker compose up -d --build || docker-compose up -d --build || /usr/libexec/docker/cli-plugins/docker-compose up -d --build || /usr/lib/docker/cli-plugins/docker-compose up -d --build || {{ echo "ERROR: docker compose did not run. None of the available invocations worked on this server." >&2; exit 1; }} )
 
-Step 3 — Detect port and write a single-line Nginx vhost for {enter_domain}. The echo content is a double-quoted shell string — escape its quotes as \\" in JSON:
-    PORT=$(cd {repo_dir} && (grep -oP "(?<=- )[0-9]+(?=:)" docker-compose.yml 2>/dev/null; grep -oE "EXPOSE [0-9]+" Dockerfile 2>/dev/null | grep -oE "[0-9]+") | head -1) && echo "server {{ listen 80; server_name {enter_domain}; location / {{ proxy_pass http://127.0.0.1:$PORT; }} }}" > /etc/nginx/sites-available/{enter_domain} && ln -sf /etc/nginx/sites-available/{enter_domain} /etc/nginx/sites-enabled/{enter_domain} && nginx -t && systemctl reload nginx
+Step 3 — Detect the exposed port from the compose file and write a single-line Nginx vhost for {enter_domain}. Escape inner " as \\" in JSON:
+    PORT=$(cd {repo_dir} && grep -oP "(?<=- )[0-9]+(?=:)" docker-compose.yml 2>/dev/null || grep -oP "(?<=- )[0-9]+(?=:)" compose.yaml 2>/dev/null || grep -oP "(?<=- )[0-9]+(?=:)" compose.yml 2>/dev/null | head -1) && echo "server {{ listen 80; server_name {enter_domain}; location / {{ proxy_pass http://127.0.0.1:$PORT; }} }}" > /etc/nginx/sites-available/{enter_domain} && ln -sf /etc/nginx/sites-available/{enter_domain} /etc/nginx/sites-enabled/{enter_domain} && nginx -t && systemctl reload nginx
 
 Step 4 — Issue SSL (idempotent; certbot is a no-op if cert already exists):
     certbot --nginx -n --agree-tos -m admin@{enter_domain} -d {enter_domain}

@@ -104,7 +104,19 @@ def call_with_continuation(prompt: str):
 # MAIN PIPELINE
 # ============================================================
 
-def do_it(prompt: str):
+MAX_FIX_DEPTH = 5  # safety cap on fix-cycle recursion
+
+
+def do_it(prompt: str, deferred_steps=None, depth: int = 0):
+    """Run a deploy plan from the AI.
+
+    deferred_steps: steps preserved from a previous run that failed partway through.
+        These are appended AFTER the AI's freshly returned steps and executed once
+        the current plan finishes — so a fix cycle's repair runs first, then the
+        original work resumes.
+    depth: fix-cycle recursion depth. Capped by MAX_FIX_DEPTH to avoid loops
+        where the fix keeps failing.
+    """
     log("=== START DEVOPS PROCESS ===", "START")
 
     global prompt_temp
@@ -124,21 +136,28 @@ def do_it(prompt: str):
     steps = parse_ai_instructions(content)
     log(f"Validated steps: {len(steps)}", "INFO")
 
-    if not steps:
-        log("No valid steps returned by AI after retries", "ERROR")
+    if not steps and not deferred_steps:
+        log("No valid steps returned by AI and no deferred work", "ERROR")
         return False
 
     # -----------------------------
-    # Step 3: Queue steps
+    # Step 3: Queue AI steps, then deferred steps from prior failure
     # -----------------------------
     for step in steps:
         log(f"Queued step: {step.label} ({len(step.cmd)} cmd, verify={'yes' if step.verify_cmd else 'no'})", "QUEUE")
         ai_instruction_queue.append(step)
+    if deferred_steps:
+        log(f"Re-queueing {len(deferred_steps)} deferred step(s) to resume after this plan", "QUEUE")
+        for step in deferred_steps:
+            log(f"Queued (deferred): {step.label} ({len(step.cmd)} cmd, verify={'yes' if step.verify_cmd else 'no'})", "QUEUE")
+            ai_instruction_queue.append(step)
     log("\n\n")
 
     # -----------------------------
-    # Step 4: Execute steps sequentially; halt on first real failure
+    # Step 4: Execute steps sequentially; on first failure, save the rest
+    # for replay AFTER the fix cycle, then halt this run.
     # -----------------------------
+    remaining_after_failure = []
     while ai_instruction_queue:
         step: DeploymentStep = ai_instruction_queue.popleft()
         log(f"--- Running step: {step.label} ---", "CMD")
@@ -154,24 +173,82 @@ def do_it(prompt: str):
                 step_ok = False
 
         if not step_ok:
-            remaining = len(ai_instruction_queue)
-            log(f"Halting pipeline: '{step.label}' failed. Skipping {remaining} remaining step(s).", "ERROR")
+            remaining_after_failure = list(ai_instruction_queue)
             ai_instruction_queue.clear()
+            log(
+                f"Pausing pipeline at '{step.label}'. Deferring {len(remaining_after_failure)} "
+                f"remaining step(s) — they will resume after the fix cycle.",
+                "ERROR",
+            )
             break
 
     log("=== DEVOPS PIPELINE COMPLETED ===", "END")
 
     # -----------------------------
-    # Step 5: Loop back to AI with any errors
+    # Step 5: If there were errors, run a fix cycle. The deferred remaining
+    # steps are carried forward so they execute once the fix completes.
     # -----------------------------
     if error_block:
+        if depth >= MAX_FIX_DEPTH:
+            log(
+                f"Max fix-cycle depth ({MAX_FIX_DEPTH}) reached; abandoning "
+                f"{len(remaining_after_failure)} deferred step(s).",
+                "ERROR",
+            )
+            error_block.clear()
+            return False
+
         local_errors = list(error_block)
         error_block.clear()
-        log(f"Triggering fix cycle for {len(local_errors)} error(s)...", "FIX")
+        log(f"Triggering fix cycle for {len(local_errors)} error(s) "
+            f"(depth {depth + 1}/{MAX_FIX_DEPTH})...", "FIX")
         fix_prompt = generate_error_fix_prompt(local_errors)
-        do_it(fix_prompt)
+        do_it(fix_prompt, deferred_steps=remaining_after_failure, depth=depth + 1)
+    elif remaining_after_failure:
+        # Failure happened but nothing landed in error_block (rare).
+        # Skip the AI and just re-run the queue with the deferred steps.
+        log(f"Resuming {len(remaining_after_failure)} deferred step(s) without fix cycle", "INFO")
+        for s in remaining_after_failure:
+            ai_instruction_queue.append(s)
+        _execute_queue(depth=depth + 1)
 
     return True
+
+
+def _execute_queue(depth: int = 0):
+    """Drain the instruction queue with the same halt-and-defer semantics as do_it,
+    but without calling the AI. Used to resume deferred work when no fix cycle
+    is needed.
+    """
+    remaining_after_failure = []
+    while ai_instruction_queue:
+        step: DeploymentStep = ai_instruction_queue.popleft()
+        log(f"--- Running step: {step.label} ---", "CMD")
+        step_ok = True
+        for cmd in step.cmd:
+            if not _run_one(cmd, step.label, phase="cmd"):
+                step_ok = False
+                break
+        if step_ok and step.verify_cmd:
+            if not _run_one(step.verify_cmd, step.label, phase="verify"):
+                step_ok = False
+        if not step_ok:
+            remaining_after_failure = list(ai_instruction_queue)
+            ai_instruction_queue.clear()
+            log(
+                f"Pausing pipeline at '{step.label}'. Deferring {len(remaining_after_failure)} "
+                f"remaining step(s) — they will resume after the fix cycle.",
+                "ERROR",
+            )
+            break
+
+    if error_block and depth < MAX_FIX_DEPTH:
+        local_errors = list(error_block)
+        error_block.clear()
+        log(f"Triggering fix cycle for {len(local_errors)} error(s) "
+            f"(depth {depth + 1}/{MAX_FIX_DEPTH})...", "FIX")
+        fix_prompt = generate_error_fix_prompt(local_errors)
+        do_it(fix_prompt, deferred_steps=remaining_after_failure, depth=depth + 1)
 
 
 def _ensure_ssh_wrapped(cmd: str) -> str:
