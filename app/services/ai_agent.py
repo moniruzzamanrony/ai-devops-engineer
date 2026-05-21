@@ -6,7 +6,8 @@ import re
 import time
 from collections import deque
 
-from app.config.hugging_face_client import call_hf
+from app.config.hugging_face_client import call_hf_messages
+from app.core.config import SERVER_HOST, SERVER_PORT, SERVER_USERNAME, SERVER_PASSWORD
 from app.dto.deployment_step import DeploymentStep, parse_steps, ValidationError
 from app.tools.run_cmd import run_command
 from app.utils.prompt_text import generate_result_analysis_prompt, generate_error_fix_prompt, get_valid_json_response
@@ -50,6 +51,56 @@ def log(message: str, level: str = "INFO", indent: int = 0):
 ai_instruction_queue = deque()
 
 # ============================================================
+# AI CALL WITH CHUNKED CONTINUATION
+# ============================================================
+
+MAX_CONTINUATION_CHUNKS = 6  # safety cap on follow-up calls
+
+def call_with_continuation(prompt: str):
+    """Call the model and auto-continue when finish_reason == 'length'.
+
+    Each request keeps the original max_tokens budget; we stitch together
+    multiple responses by feeding the partial reply back as the assistant
+    turn and asking the model to continue from where it stopped.
+
+    Returns (concatenated_content, last_finish_reason).
+    """
+    messages = [{"role": "user", "content": prompt}]
+    accumulated = ""
+
+    for chunk_idx in range(MAX_CONTINUATION_CHUNKS):
+        res = call_hf_messages(messages)
+
+        try:
+            piece = res["choices"][0]["message"]["content"] or ""
+        except Exception:
+            log(f"Unexpected AI response shape: {res}", "ERROR")
+            return accumulated, "error"
+
+        accumulated += piece
+        finish_reason = res.get("choices", [{}])[0].get("finish_reason")
+
+        if finish_reason != "length":
+            if chunk_idx > 0:
+                log(f"Stitched {chunk_idx + 1} chunks into a complete response", "INFO")
+            return accumulated, finish_reason
+
+        log(f"Chunk {chunk_idx + 1} hit token cap, requesting continuation...", "WARN")
+        messages.append({"role": "assistant", "content": piece})
+        messages.append({
+            "role": "user",
+            "content": (
+                "Your previous reply was cut off mid-output. "
+                "Continue from EXACTLY the character where you stopped. "
+                "Do NOT repeat any earlier text, do NOT add a preface, do NOT wrap in markdown. "
+                "Output only the remaining characters so that concatenating your previous reply "
+                "and this reply yields a single valid JSON array."
+            ),
+        })
+
+    return accumulated, "length"
+
+# ============================================================
 # MAIN PIPELINE
 # ============================================================
 
@@ -60,19 +111,12 @@ def do_it(prompt: str):
     prompt_temp = prompt
 
     # -----------------------------
-    # Step 1: Call AI
+    # Step 1: Call AI (with chunked continuation on truncation)
     # -----------------------------
     log("Sending prompt to AI...", "INFO")
-    res = call_hf(prompt)
-
-    finish_reason = res.get("choices", [{}])[0].get("finish_reason")
+    content, finish_reason = call_with_continuation(prompt)
     if finish_reason == "length":
-        log("AI response truncated", "WARN")
-
-    try:
-        content = res["choices"][0]["message"]["content"]
-    except Exception:
-        content = str(res)
+        log("AI response still truncated after continuation budget", "WARN")
 
     # -----------------------------
     # Step 2: Parse + validate against DeploymentStep schema (retries inside)
@@ -93,17 +137,27 @@ def do_it(prompt: str):
     log("\n\n")
 
     # -----------------------------
-    # Step 4: Execute steps
+    # Step 4: Execute steps sequentially; halt on first real failure
     # -----------------------------
     while ai_instruction_queue:
         step: DeploymentStep = ai_instruction_queue.popleft()
         log(f"--- Running step: {step.label} ---", "CMD")
 
+        step_ok = True
         for cmd in step.cmd:
-            _run_one(cmd, step.label, phase="cmd")
+            if not _run_one(cmd, step.label, phase="cmd"):
+                step_ok = False
+                break
 
-        if step.verify_cmd:
-            _run_one(step.verify_cmd, step.label, phase="verify")
+        if step_ok and step.verify_cmd:
+            if not _run_one(step.verify_cmd, step.label, phase="verify"):
+                step_ok = False
+
+        if not step_ok:
+            remaining = len(ai_instruction_queue)
+            log(f"Halting pipeline: '{step.label}' failed. Skipping {remaining} remaining step(s).", "ERROR")
+            ai_instruction_queue.clear()
+            break
 
     log("=== DEVOPS PIPELINE COMPLETED ===", "END")
 
@@ -120,9 +174,42 @@ def do_it(prompt: str):
     return True
 
 
-def _run_one(cmd: str, step_label: str, phase: str):
-    """Execute one command, recording any failure into the module-level error_block."""
+def _ensure_ssh_wrapped(cmd: str) -> str:
+    """The model emits only the REMOTE shell command. This wraps it with sshpass+ssh
+    for transport. Single quotes around the remote payload prevent the LOCAL shell
+    from expanding $VAR / $(...) — those must reach the server unevaluated.
+
+    Literal single quotes inside the payload are escaped via the close-escape-reopen
+    dance ('\\''). A model output that already starts with `sshpass` is passed
+    through unchanged.
+
+    Also normalises `\\$` -> `$`: the 7B model occasionally over-defensively
+    escapes dollar signs (e.g. emits `\\$PORT` instead of `$PORT`). The single-
+    quote wrapping already preserves `$` from local-shell expansion, so the
+    backslash is unwanted noise — and worse, on the remote it makes the `$` literal,
+    breaking variable references like `-p \\$PORT:\\$PORT` (docker sees the
+    raw string and fails).
+    """
+    if cmd.lstrip().startswith("sshpass"):
+        return cmd
+    cmd = cmd.replace("\\$", "$")
+    escaped = cmd.replace("'", "'\\''")
+    return (
+        f"sshpass -p '{SERVER_PASSWORD}' ssh -o StrictHostKeyChecking=no "
+        f"-p {SERVER_PORT} {SERVER_USERNAME}@{SERVER_HOST} '{escaped}'"
+    )
+
+
+def _run_one(cmd: str, step_label: str, phase: str) -> bool:
+    """Execute one command. Returns True on success (exit 0), False on failure.
+
+    Failure is decided by the process exit code — NOT by the presence of stderr
+    output, because docker/git/nginx/certbot routinely emit progress on stderr
+    during a successful run. On failure, the error is appended to error_block
+    for the downstream fix cycle.
+    """
     try:
+        cmd = _ensure_ssh_wrapped(cmd)
         log(f"Executing ({phase}): {cmd}", "CMD")
         if not is_valid_command(cmd):
             log(f"Invalid command from model: {cmd}", "ERROR")
@@ -132,17 +219,21 @@ def _run_one(cmd: str, step_label: str, phase: str):
                 "run_cmd": cmd,
                 "error": "Local executable not found",
             })
-            return
+            return False
 
         result = run_command(cmd)
-        if result.get('error'):
+        if result.get('exit_status') != 0:
+            log(f"Step failed (exit {result.get('exit_status')}): {result.get('error')}", "ERROR")
             error_block.append({
                 "step": step_label,
                 "phase": phase,
                 "run_cmd": cmd,
                 "error": result.get('error'),
             })
+            return False
+
         log(f"Output: {result.get('output')}", "RESULT")
+        return True
     except Exception as e:
         log(f"Execution failed: {e}", "ERROR")
         error_block.append({
@@ -151,6 +242,7 @@ def _run_one(cmd: str, step_label: str, phase: str):
             "run_cmd": cmd,
             "error": str(e),
         })
+        return False
     finally:
         time.sleep(COMMAND_DELAY_SECONDS)
 
@@ -208,21 +300,15 @@ def parse_ai_instructions(content: str, max_retries: int = 5):
         if attempt == max_retries:
             break
 
-        # 3. Re-prompt with the schema spelled out
+        # 3. Re-prompt with the schema spelled out (chunked continuation on truncation)
         log(f"Re-prompting AI for DeploymentStep schema (attempt {attempt}/{max_retries})...", "WARN")
         retry_prompt = _build_schema_retry_prompt(cleaned)
-        res = call_hf(retry_prompt)
-
-        try:
-            cleaned = res["choices"][0]["message"]["content"]
-        except Exception:
-            cleaned = str(res)
+        cleaned, finish_reason = call_with_continuation(retry_prompt)
         cleaned = re.sub(r"```json|```", "", cleaned).strip()
         cleaned = fix_invalid_json_escapes(cleaned)
 
-        finish_reason = res.get("choices", [{}])[0].get("finish_reason")
         if finish_reason == "length":
-            log("AI response truncated", "WARN")
+            log("AI response still truncated after continuation budget", "WARN")
 
     log(f"Failed to obtain valid DeploymentStep[] after {max_retries} attempts", "ERROR")
     return []

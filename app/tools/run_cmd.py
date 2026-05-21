@@ -13,37 +13,27 @@ def run_command(command):
         )
 
         stdout, stderr = process.communicate()
+        exit_status = process.returncode
 
-        # 🚫 Filter unwanted warning lines
-        def is_noise(line):
-            noise_keywords = [
-                "WARNING:",
-                "warning:",
-                "perl: warning",
-                "locale:",
-                "debconf:",
-                "dpkg-preconfigure",
-                "No containers need to be restarted",
-                "No user sessions are running",
-                "No VM guests are running",
-                "Restarting services",
-                "Service restarts being deferred"
-            ]
-            return any(keyword in line for keyword in noise_keywords)
-
-        clean_error = "\n".join(
-            line for line in stderr.splitlines()
-            if not is_noise(line)
-        )
+        # Many tools (docker, git, nginx, certbot) write progress/status to stderr
+        # even on success. The exit code is the real signal — only surface stderr
+        # as an error when the process actually failed.
+        if exit_status == 0:
+            return {
+                "output": stdout.strip() or stderr.strip(),
+                "error": "",
+                "exit_status": 0,
+            }
 
         return {
             "output": stdout.strip(),
-            "error": clean_error.strip(),
+            "error": stderr.strip(),
+            "exit_status": exit_status,
         }
 
     except Exception as e:
         return {
             "output": "",
             "error": str(e),
-            "exit_status": -1
+            "exit_status": -1,
         }

@@ -22,4 +22,6 @@ def get_server_credential(env_key: str,):
 
 HF_API_URL = "https://router.huggingface.co/v1/chat/completions"
 
-MODEL_AI="Qwen/Qwen2.5-7B-Instruct"
+# Coder-specialised model — far more reliable than 7B at producing valid JSON
+# with escape-heavy shell commands. Override via HF_MODEL env var if needed.
+MODEL_AI = os.getenv("HF_MODEL", "Qwen/Qwen2.5-Coder-32B-Instruct")

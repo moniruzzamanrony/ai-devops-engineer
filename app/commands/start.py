@@ -38,8 +38,12 @@ def user_interaction():
         app_type = input("Choice your app type (1. Dockerize app. 2. Node frontend: ").strip()
         repo_link = input("Enter your git repository link: ").strip()
         enter_domain = input("Enter your domain: ").strip()
-        response = ai_agent.do_it(prompt_text.generate_app_deploy_prompt(app_type, repo_link, enter_domain))
-        print(response)
+        if app_type == "1":
+            response = ai_agent.do_it(prompt_text.generate_dockerize_app_deploy_prompt(repo_link, enter_domain))
+        elif app_type == "2":
+            response = ai_agent.do_it(prompt_text.generate_static_app_deploy_prompt(enter_domain))
+        else:
+            raise ValueError("Invalid option selected")
 
     # Add your server setup and deployment logic here
     elif input_choice == "3":

@@ -10,13 +10,17 @@ headers = {
 }
 
 def call_hf(prompt: str):
+    return call_hf_messages([{"role": "user", "content": prompt}])
+
+
+def call_hf_messages(messages: list):
     payload = {
         "model": MODEL_AI,
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
+        "messages": messages,
         "max_tokens": 1500,
-        "temperature": 0.7
+        # Low temperature for JSON-structured output: less creative variation
+        # in escape sequences and string quoting.
+        "temperature": 0.2,
     }
 
     response = requests.post(HF_API_URL, headers=headers, json=payload)
