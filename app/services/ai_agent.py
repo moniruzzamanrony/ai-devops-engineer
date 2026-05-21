@@ -37,7 +37,8 @@ def log(message: str, level: str = "INFO", indent: int = 0):
         "CMD": "💻",
         "RESULT": "📦",
         "QUEUE": "📥",
-        "FIX": "🔧"
+        "FIX": "🔧",
+        "OK": "✅",
     }
 
     icon = level_icons.get(level, "•")
@@ -107,6 +108,33 @@ def call_with_continuation(prompt: str):
 MAX_FIX_DEPTH = 5  # safety cap on fix-cycle recursion
 
 
+# Errors that no fix cycle can repair — the operator must change config / credentials.
+# A match here short-circuits the fix cycle with an actionable message instead of
+# burning retries on something the AI cannot solve.
+UNFIXABLE_PATTERNS = [
+    ("Invalid username or token",            "GitHub credentials are invalid. Update GIT_ACCESS_TOKEN in .env with a fresh personal access token."),
+    ("Password authentication is not supported", "GitHub requires a personal access token. Update GIT_ACCESS_TOKEN in .env."),
+    ("Authentication failed for 'https://github.com", "GitHub auth failed. Update GIT_ACCESS_TOKEN in .env."),
+    ("could not read Username for",          "GitHub credentials missing or malformed in .env (GIT_USERNAME / GIT_ACCESS_TOKEN)."),
+    ("Permission denied (publickey)",        "SSH key auth rejected by the remote. Add your key to the server or check .env."),
+    ("Permission denied, please try again",  "SSH password rejected. Check SERVER_PASSWORD in .env."),
+    ("ssh: connect to host",                 "Cannot reach the deploy server. Check SERVER_HOST / SERVER_PORT in .env and network connectivity."),
+    ("Could not resolve host",               "DNS lookup failed. Check the host value in .env and the network."),
+    ("Connection refused",                   "The target host refused the connection. Check that SSH is running on SERVER_PORT."),
+    ("Host key verification failed",         "Remote host key mismatch. Remove the stale entry from ~/.ssh/known_hosts or trust the new host."),
+]
+
+
+def _classify_unfixable(errors):
+    """Return an operator-facing message if any error matches an unfixable pattern."""
+    for item in errors:
+        err = item.get("error") or ""
+        for pattern, advice in UNFIXABLE_PATTERNS:
+            if pattern in err:
+                return advice, item
+    return None, None
+
+
 def do_it(prompt: str, deferred_steps=None, depth: int = 0):
     """Run a deploy plan from the AI.
 
@@ -155,12 +183,16 @@ def do_it(prompt: str, deferred_steps=None, depth: int = 0):
 
     # -----------------------------
     # Step 4: Execute steps sequentially; on first failure, save the rest
-    # for replay AFTER the fix cycle, then halt this run.
+    # for replay AFTER the fix cycle, then halt this run. Each step must
+    # SUCCEED (exit 0) before the next is dispatched.
     # -----------------------------
     remaining_after_failure = []
+    total_steps = len(ai_instruction_queue)
+    step_index = 0
     while ai_instruction_queue:
         step: DeploymentStep = ai_instruction_queue.popleft()
-        log(f"--- Running step: {step.label} ---", "CMD")
+        step_index += 1
+        log(f"--- Running step {step_index}/{total_steps}: {step.label} ---", "CMD")
 
         step_ok = True
         for cmd in step.cmd:
@@ -176,11 +208,15 @@ def do_it(prompt: str, deferred_steps=None, depth: int = 0):
             remaining_after_failure = list(ai_instruction_queue)
             ai_instruction_queue.clear()
             log(
-                f"Pausing pipeline at '{step.label}'. Deferring {len(remaining_after_failure)} "
-                f"remaining step(s) — they will resume after the fix cycle.",
+                f"Pausing pipeline at step {step_index}/{total_steps} '{step.label}'. "
+                f"Deferring {len(remaining_after_failure)} remaining step(s) — they will resume after the fix cycle.",
                 "ERROR",
             )
             break
+
+        # Explicit success gate — only reached when every cmd (and verify_cmd) in the
+        # step returned exit 0. Makes the sequential success-gating visible in the log.
+        log(f"Step {step_index}/{total_steps} '{step.label}' completed; advancing to next step", "OK")
 
     log("=== DEVOPS PIPELINE COMPLETED ===", "END")
 
@@ -189,17 +225,26 @@ def do_it(prompt: str, deferred_steps=None, depth: int = 0):
     # steps are carried forward so they execute once the fix completes.
     # -----------------------------
     if error_block:
+        local_errors = list(error_block)
+        error_block.clear()
+
+        # Short-circuit on errors the AI cannot fix (bad credentials, network, host
+        # key, etc). Burning 5 fix attempts on these wastes time and api budget.
+        advice, offending = _classify_unfixable(local_errors)
+        if advice:
+            log(f"Unfixable error in step '{offending.get('step')}': {offending.get('error', '').splitlines()[0] if offending.get('error') else ''}", "ERROR")
+            log(f"ACTION REQUIRED: {advice}", "ERROR")
+            log(f"Abandoning {len(remaining_after_failure)} deferred step(s) — they cannot proceed until this is resolved.", "ERROR")
+            return False
+
         if depth >= MAX_FIX_DEPTH:
             log(
                 f"Max fix-cycle depth ({MAX_FIX_DEPTH}) reached; abandoning "
                 f"{len(remaining_after_failure)} deferred step(s).",
                 "ERROR",
             )
-            error_block.clear()
             return False
 
-        local_errors = list(error_block)
-        error_block.clear()
         log(f"Triggering fix cycle for {len(local_errors)} error(s) "
             f"(depth {depth + 1}/{MAX_FIX_DEPTH})...", "FIX")
         fix_prompt = generate_error_fix_prompt(local_errors)
@@ -221,9 +266,12 @@ def _execute_queue(depth: int = 0):
     is needed.
     """
     remaining_after_failure = []
+    total_steps = len(ai_instruction_queue)
+    step_index = 0
     while ai_instruction_queue:
         step: DeploymentStep = ai_instruction_queue.popleft()
-        log(f"--- Running step: {step.label} ---", "CMD")
+        step_index += 1
+        log(f"--- Running step {step_index}/{total_steps}: {step.label} ---", "CMD")
         step_ok = True
         for cmd in step.cmd:
             if not _run_one(cmd, step.label, phase="cmd"):
@@ -236,11 +284,12 @@ def _execute_queue(depth: int = 0):
             remaining_after_failure = list(ai_instruction_queue)
             ai_instruction_queue.clear()
             log(
-                f"Pausing pipeline at '{step.label}'. Deferring {len(remaining_after_failure)} "
-                f"remaining step(s) — they will resume after the fix cycle.",
+                f"Pausing pipeline at step {step_index}/{total_steps} '{step.label}'. "
+                f"Deferring {len(remaining_after_failure)} remaining step(s) — they will resume after the fix cycle.",
                 "ERROR",
             )
             break
+        log(f"Step {step_index}/{total_steps} '{step.label}' completed; advancing to next step", "OK")
 
     if error_block and depth < MAX_FIX_DEPTH:
         local_errors = list(error_block)

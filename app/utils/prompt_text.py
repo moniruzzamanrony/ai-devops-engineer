@@ -450,7 +450,7 @@ def generate_server_setup_prompt(option: str):
         13. Use systemctl enable/start only if required.
         14. Include verification commands for every setup section.
         15. Ensure proper JSON escaping.
-        16. Install always latest version
+        16. Install always latest version available in official repos or via recommended installation method.
         
         ==================================================
         SSH COMMAND FORMAT
@@ -519,7 +519,11 @@ CONTEXT (use these literal values):
 - Clone URL with auth: {auth_repo_url}
 - Nginx config path: {nginx_conf}
 - Nginx symlink path: {nginx_link}
-- docker, docker compose plugin, docker-compose, nginx, certbot, git are ALREADY INSTALLED — never install, apt-get, snap, or sudo apt.
+
+============================================================
+ABSOLUTE RULE — NEVER INSTALL ANYTHING
+============================================================
+docker, docker-compose-plugin, docker-compose, nginx, certbot, python3-certbot-nginx, and git are ALL ALREADY INSTALLED on the server. Your output MUST NOT contain ANY of these tokens (case-insensitive): `apt`, `apt-get`, `apt install`, `snap`, `snap install`, `dpkg -i`, `pip install`, `curl ... | sh`, `wget ... | sh`, `install.sh`, `add-apt-repository`, `sudo apt`. If a step seems to require an install, you have misread the task — re-read the steps below; ALL prerequisites already exist on the server. The pipeline will halt with an error if any install command is emitted.
 
 ============================================================
 HOW YOUR OUTPUT IS EXECUTED
@@ -534,6 +538,7 @@ JSON RULES
 3. Use bare $ for shell variables ($PORT, $(...)). NEVER prefix $ with backslash.
 4. Use DOUBLE quotes for shell strings ("..."). Escape inner " as \\" in JSON.
 5. Do NOT use single quotes inside the remote command.
+6. NEVER emit install/package-manager commands (see the ABSOLUTE RULE above).
 
 ============================================================
 KEEP COMMANDS DISCRETE — ONE ACTION PER STEP
@@ -548,7 +553,7 @@ SCHEMA: {{"label": "short name", "cmd": ["<remote shell command>"]}}
 Omit "verify_cmd".
 
 ============================================================
-PRODUCE EXACTLY THESE 7 STEPS, IN ORDER
+PRODUCE EXACTLY THESE 8 STEPS, IN ORDER
 ============================================================
 
 Step 1 — Clone or update {repo_dir} (idempotent — chain unavoidable):
@@ -557,22 +562,25 @@ Step 1 — Clone or update {repo_dir} (idempotent — chain unavoidable):
 Step 2 — Bring up the compose stack (alternatives — chain allowed; NO install commands):
     cd {repo_dir} && ( docker compose up -d --build || docker-compose up -d --build || /usr/libexec/docker/cli-plugins/docker-compose up -d --build || /usr/lib/docker/cli-plugins/docker-compose up -d --build )
 
-Step 3 — Detect port from the compose file and write the nginx vhost (state must flow — chain unavoidable):
-    PORT=$(grep -oP "(?<=- )[0-9]+(?=:)" {repo_dir}/docker-compose.yml 2>/dev/null || grep -oP "(?<=- )[0-9]+(?=:)" {repo_dir}/compose.yaml 2>/dev/null || grep -oP "(?<=- )[0-9]+(?=:)" {repo_dir}/compose.yml 2>/dev/null | head -1) && echo "server {{ listen 80; server_name {enter_domain}; location / {{ proxy_pass http://127.0.0.1:$PORT; }} }}" > {nginx_conf}
+Step 3 — Detect the host port from the LIVE compose project (queries docker ps for the actually-published port — far more reliable than parsing YAML) and write the nginx vhost. State must flow, so this stays chained:
+    PORT=$(docker ps --filter "label=com.docker.compose.project={repo_name}" --format "{{{{.Ports}}}}" | grep -oP "[0-9]+(?=->)" | head -1) && echo "server {{ listen 80; server_name {enter_domain}; location / {{ proxy_pass http://127.0.0.1:$PORT; }} }}" > {nginx_conf}
 
-Step 4 — Enable the vhost (single command):
+Step 4 — Verify the nginx upstream port matches the docker-published port. Re-reads both and exits non-zero (halting the pipeline) if they differ. State must flow, so this stays chained:
+    DOCKER_PORT=$(docker ps --filter "label=com.docker.compose.project={repo_name}" --format "{{{{.Ports}}}}" | grep -oP "[0-9]+(?=->)" | head -1) && NGINX_PORT=$(grep -oP "(?<=127\\.0\\.0\\.1:)[0-9]+" {nginx_conf} | head -1) && test -n "$DOCKER_PORT" && test "$DOCKER_PORT" = "$NGINX_PORT" && echo "OK: nginx upstream port $NGINX_PORT matches docker published port $DOCKER_PORT"
+
+Step 5 — Enable the vhost (single command):
     ln -sf {nginx_conf} {nginx_link}
 
-Step 5 — Test nginx config (single command):
+Step 6 — Test nginx config (single command):
     nginx -t
 
-Step 6 — Reload nginx (single command):
+Step 7 — Reload nginx (single command):
     systemctl reload nginx
 
-Step 7 — Issue SSL certificate (single command):
+Step 8 — Issue SSL certificate (single command):
     certbot --nginx -n --agree-tos -m admin@{enter_domain} -d {enter_domain}
 
-Return ONLY the JSON array containing exactly those 7 steps in that order. Nothing else."""
+Return ONLY the JSON array containing exactly those 8 steps in that order. Nothing else."""
 
     return prompt
 
@@ -591,7 +599,11 @@ CONTEXT (use these literal values):
 - Domain: {enter_domain}
 - Nginx config path: {nginx_conf}
 - Nginx symlink path: {nginx_link}
-- nginx, certbot are ALREADY INSTALLED — never install, apt-get, snap, or sudo apt.
+
+============================================================
+ABSOLUTE RULE — NEVER INSTALL ANYTHING
+============================================================
+nginx, certbot, and python3-certbot-nginx are ALL ALREADY INSTALLED on the server. Your output MUST NOT contain ANY of these tokens (case-insensitive): `apt`, `apt-get`, `apt install`, `snap`, `snap install`, `dpkg -i`, `pip install`, `curl ... | sh`, `wget ... | sh`, `install.sh`, `add-apt-repository`, `sudo apt`. If a step seems to require an install, you have misread the task — re-read the steps below; ALL prerequisites already exist on the server. The pipeline will halt with an error if any install command is emitted.
 
 ============================================================
 HOW YOUR OUTPUT IS EXECUTED
@@ -605,6 +617,7 @@ JSON RULES
 2. Valid JSON escapes ONLY: \\"  \\\\  \\/  \\b  \\f  \\n  \\r  \\t  \\uXXXX.
 3. Use DOUBLE quotes for shell strings ("..."). Escape inner " as \\" in JSON.
 4. Do NOT use single quotes inside the remote command.
+5. NEVER emit install/package-manager commands (see the ABSOLUTE RULE above).
 
 ============================================================
 KEEP COMMANDS DISCRETE — ONE ACTION PER STEP
