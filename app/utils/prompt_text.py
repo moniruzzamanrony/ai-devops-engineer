@@ -1,5 +1,6 @@
 import json
 
+from app.core.config import SERVER_HOST, SERVER_PORT, SERVER_USERNAME, SERVER_PASSWORD
 from app.tools.temp_credential import get_value
 
 
@@ -87,7 +88,7 @@ COMMAND FORMAT RULES
 ========================
 
 - Each command MUST use this SSH format:
-  sshpass -p '{get_value('server_password')}' ssh {get_value('server_user')}@{get_value('server_host')} 'command'
+  sshpass -p '{get_value('server_password')}' ssh -p {get_value('server_port')} {get_value('server_user')}@{get_value('server_host')} 'command'
 
 - All commands must be:
   - Single-line
@@ -101,7 +102,7 @@ COMMAND FORMAT RULES
 CRITICAL RULES
 ========================
 
-- Output MUST be a valid JSON array of strings
+- Output MUST be a valid JSON array of OBJECTS matching the schema below
 - DO NOT include explanations
 - DO NOT include markdown
 - DO NOT include extra text
@@ -112,12 +113,34 @@ CRITICAL RULES
 - Each command must be idempotent
 
 ========================
+OUTPUT SCHEMA (MANDATORY)
+========================
+
+Each step is an object with EXACTLY these keys:
+  - "label":      string, short human-readable name for the step
+  - "cmd":        non-empty array of strings, each a fully-formed shell command
+  - "verify_cmd": string, a single command that confirms the step succeeded
+
+========================
 OUTPUT FORMAT
 ========================
 
 [
-  "sshpass -p 'PASSWORD' ssh USER@HOST 'command'",
-  "sshpass -p 'PASSWORD' ssh USER@HOST 'command'"
+  {{
+    "label": "Update apt package index",
+    "cmd": [
+      "sshpass -p 'PASSWORD' ssh -p PORT USER@HOST 'sudo apt update'"
+    ],
+    "verify_cmd": "sshpass -p 'PASSWORD' ssh -p PORT USER@HOST 'sudo apt list --upgradable'"
+  }},
+  {{
+    "label": "Install Docker",
+    "cmd": [
+      "sshpass -p 'PASSWORD' ssh -p PORT USER@HOST 'sudo apt install -y docker.io'",
+      "sshpass -p 'PASSWORD' ssh -p PORT USER@HOST 'sudo systemctl enable --now docker'"
+    ],
+    "verify_cmd": "sshpass -p 'PASSWORD' ssh -p PORT USER@HOST 'docker --version'"
+  }}
 ]
 
 ========================
@@ -243,7 +266,7 @@ def generate_error_fix_prompt(error_block):
     prompt = f"""
 You are a DevOps automation agent.
 
-Your task is to analyze failed command executions and return ONLY a valid JSON array of strings.
+Your task is to analyze failed command executions and return ONLY a valid JSON array of fix steps.
 
 ========================
 INPUT
@@ -269,39 +292,54 @@ Return:
 - SSH connection issue
 - permission denied (SSH)
 
-Return ONLY:
-["Fix SSH credentials or connection (check host, username, password, SSH access)"]
+Return EXACTLY one step explaining the auth issue:
+[
+  {{
+    "label": "SSH credentials/connection issue",
+    "cmd": ["echo 'Fix SSH credentials or connection (check host, username, password, SSH access)'"],
+    "verify_cmd": "echo 'manual intervention required'"
+  }}
+]
 
 3. For ALL OTHER errors:
-- Return ONLY fix commands
-- Use this exact format:
+- Return ONLY fix steps in the schema below
+- Each cmd MUST use this SSH format:
+  sshpass -p '{get_value('server_password')}' ssh -p {get_value('server_port')} {get_value('server_user')}@{get_value('server_host')} 'command'
 
-sshpass -p '{get_value('server_password')}' ssh {get_value('server_user')}@{get_value('server_host')} 'command'
+========================
+OUTPUT SCHEMA (MANDATORY)
+========================
 
-- Each command must:
-  - Be single-line
-  - Be independent
-  - Directly fix the issue
+Each step is an object with EXACTLY these keys:
+  - "label":      string, short human-readable name for the fix
+  - "cmd":        non-empty array of strings, each a fully-formed shell command
+  - "verify_cmd": string, a single command that confirms the fix succeeded
+
+========================
+OUTPUT FORMAT EXAMPLE
+========================
+
+[
+  {{
+    "label": "Install missing package",
+    "cmd": [
+      "sshpass -p 'PASSWORD' ssh -p PORT USER@HOST 'sudo apt install -y docker.io'"
+    ],
+    "verify_cmd": "sshpass -p 'PASSWORD' ssh -p PORT USER@HOST 'docker --version'"
+  }}
+]
 
 ========================
 STRICT OUTPUT FORMAT
 ========================
 
 - Output MUST be valid JSON
-- Output MUST be a JSON array only
-- Output MUST contain ONLY strings
+- Output MUST be a JSON array of objects matching the schema above (or empty array if no errors)
 - NO markdown (no ```json)
 - NO explanations
 - NO extra text
 - NO comments
-- NO objects
 - NO trailing commas
-
-Valid examples:
-
-[]
-["sshpass -p 'pass' ssh root@host 'apt install -y docker.io'"]
-["Fix SSH credentials or connection (check host, username, password, SSH access)"]
 
 ========================
 IMPORTANT
@@ -350,3 +388,217 @@ def get_valid_json_response(call_ai_fn, prompt, max_retries=3):
             """
 
     raise Exception("Failed to get valid JSON after retries")
+
+
+def generate_server_setup_prompt(option: str):
+    if option == '1':
+        task = 'Install Docker, Nginx, and Certbot on the target Ubuntu server.'
+    else:
+        raise ValueError("Invalid option selected")
+
+    prompt = f"""
+        You are an expert DevOps automation agent.
+        
+        Your responsibility is to generate a COMPLETE, PRODUCTION-READY, and IDEMPOTENT deployment plan as a VALID JSON ARRAY.
+        
+        ==================================================
+        SERVER INFORMATION
+        ==================================================
+        Host: {SERVER_HOST}
+        Port: {SERVER_PORT}
+        Username: {SERVER_USERNAME}
+        Password: {SERVER_PASSWORD}
+        
+        ==================================================
+        TASK
+        ==================================================
+        {task}
+        
+        ==================================================
+        OUTPUT STRUCTURE
+        ==================================================
+        
+        Return ONLY a valid JSON array in the following format:
+        
+        [
+          {{
+            "label": "Install Docker",
+            "cmd": [
+              "sshpass -p 'PASSWORD' ssh -p PORT USER@HOST \\"command\\"",
+              "sshpass -p 'PASSWORD' ssh -p PORT USER@HOST \\"command\\""
+            ],
+            "verify_cmd": "sshpass -p 'PASSWORD' ssh -p PORT USER@HOST \\"command\\""
+          }}
+        ]
+        
+        ==================================================
+        STRICT REQUIREMENTS
+        ==================================================
+        
+        1. Response MUST be valid JSON.
+        2. Return ONLY the JSON array.
+        3. No markdown.
+        4. No explanations.
+        5. No comments.
+        6. No extra text before or after JSON.
+        7. Every command must be executable independently.
+        8. Every command must be a SINGLE LINE.
+        9. Commands must be ordered correctly.
+        10. Commands must be safe for repeated execution (IDEMPOTENT).
+        11. Use Ubuntu-compatible commands only.
+        12. Use non-interactive installation flags where applicable.
+        13. Use systemctl enable/start only if required.
+        14. Include verification commands for every setup section.
+        15. Ensure proper JSON escaping.
+        
+        ==================================================
+        SSH COMMAND FORMAT
+        ==================================================
+        
+        Every command MUST strictly use this format:
+        
+        sshpass -p '{get_value('server_password')}' ssh -o StrictHostKeyChecking=no -p {get_value('server_port')} {get_value('server_user')}@{get_value('server_host')} "command"
+        
+        ==================================================
+        IDEMPOTENCY RULES
+        ==================================================
+        
+        Commands MUST safely support repeated execution.
+        
+        Preferred patterns:
+        
+        - command || install_command
+        - test_condition && echo "already installed" || install_command
+        - systemctl is-enabled service || systemctl enable service
+        - docker --version || installation_command
+        
+        Never generate destructive commands unless absolutely necessary.
+        
+        ==================================================
+        EXPECTED TASKS
+        ==================================================
+        
+        Generate commands for:
+        
+        1. Updating apt package index
+        2. Installing Docker if missing
+        3. Enabling and starting Docker
+        4. Installing Nginx if missing
+        5. Enabling and starting Nginx
+        6. Installing Certbot and python3-certbot-nginx if missing
+        7. Verifying installations
+        
+        ==================================================
+        FINAL RULE
+        ==================================================
+        
+        Return ONLY the JSON array.
+        """
+    return prompt
+
+
+def generate_app_deploy_prompt(option: str, repo_link: str, enter_domain: str):
+    if option == '1':
+        task = 'Install Docker, Nginx, and Certbot on the target Ubuntu server.'
+    else:
+        raise ValueError("Invalid option selected")
+
+    prompt = f"""
+        You are an expert DevOps automation agent.
+
+        Your responsibility is to generate a COMPLETE, PRODUCTION-READY, and IDEMPOTENT deployment plan as a VALID JSON ARRAY.
+
+        ==================================================
+        SERVER INFORMATION
+        ==================================================
+        Host: {SERVER_HOST}
+        Port: {SERVER_PORT}
+        Username: {SERVER_USERNAME}
+        Password: {SERVER_PASSWORD}
+
+        ==================================================
+        TASK
+        ==================================================
+        {task}
+
+        ==================================================
+        OUTPUT STRUCTURE
+        ==================================================
+
+        Return ONLY a valid JSON array in the following format:
+
+        [
+          {{
+            "label": "Install Docker",
+            "cmd": [
+              "sshpass -p 'PASSWORD' ssh -p PORT USER@HOST \\"command\\"",
+              "sshpass -p 'PASSWORD' ssh -p PORT USER@HOST \\"command\\""
+            ],
+            "verify_cmd": "sshpass -p 'PASSWORD' ssh -p PORT USER@HOST \\"command\\""
+          }}
+        ]
+
+        ==================================================
+        STRICT REQUIREMENTS
+        ==================================================
+
+        1. Response MUST be valid JSON.
+        2. Return ONLY the JSON array.
+        3. No markdown.
+        4. No explanations.
+        5. No comments.
+        6. No extra text before or after JSON.
+        7. Every command must be executable independently.
+        8. Every command must be a SINGLE LINE.
+        9. Commands must be ordered correctly.
+        10. Commands must be safe for repeated execution (IDEMPOTENT).
+        11. Use Ubuntu-compatible commands only.
+        12. Use non-interactive installation flags where applicable.
+        13. Use systemctl enable/start only if required.
+        14. Include verification commands for every setup section.
+        15. Ensure proper JSON escaping.
+
+        ==================================================
+        SSH COMMAND FORMAT
+        ==================================================
+
+        Every command MUST strictly use this format:
+
+        sshpass -p '{get_value('server_password')}' ssh -o StrictHostKeyChecking=no -p {get_value('server_port')} {get_value('server_user')}@{get_value('server_host')} "command"
+
+        ==================================================
+        IDEMPOTENCY RULES
+        ==================================================
+
+        Commands MUST safely support repeated execution.
+
+        Preferred patterns:
+
+        - command || install_command
+        - test_condition && echo "already installed" || install_command
+        - systemctl is-enabled service || systemctl enable service
+        - docker --version || installation_command
+
+        Never generate destructive commands unless absolutely necessary.
+
+        ==================================================
+        EXPECTED TASKS
+        ==================================================
+
+        Generate commands for:
+
+        1. Updating apt package index
+        2. Installing Docker if missing
+        3. Enabling and starting Docker
+        4. Installing Nginx if missing
+        5. Enabling and starting Nginx
+        6. Installing Certbot and python3-certbot-nginx if missing
+        7. Verifying installations
+
+        ==================================================
+        FINAL RULE
+        ==================================================
+
+        Return ONLY the JSON array.
+        """
+    return prompt

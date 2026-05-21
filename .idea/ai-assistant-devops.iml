@@ -5,7 +5,7 @@
       <sourceFolder url="file://$MODULE_DIR$/venv/lib/python3.12/site-packages" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/.venv" />
     </content>
-    <orderEntry type="jdk" jdkName="Python 3.12 (ai-assistant-devops)" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="Python 3.12 (ai-devops-engineer)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
 </module>
